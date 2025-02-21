@@ -133,7 +133,7 @@ RTTIType type = Serializable::GetByName("A"); // 通过名称获取类型
 - **通过类型创建对象**
 
 ```cpp
-RTTIType type = Serializable::GetByType<A>(); // 通过类型获取类型
+RTTIType type = Serializable::Get<A>(); // 通过类型获取类型
 ```
 
 #### 实例化对象
