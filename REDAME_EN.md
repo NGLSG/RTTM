@@ -133,7 +133,7 @@ RTTIType type = Serializable::GetByName("A"); // Get type by name
 - **By Type**
 
 ```cpp name=examples/reflect_usage.cpp
-RTTIType type = Serializable::GetByType<A>(); // Get type using template
+RTTIType type = Serializable::Get<A>(); // Get type using template
 ```
 
 #### Instantiating an Object
