@@ -1,0 +1,51 @@
+<svg data-v-0dd9719b="" version="1.0" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="0 0 340 250" preserveAspectRatio="xMidYMid meet" color-interpolation-filters="sRGB" style="margin: auto;">
+    <!-- Changed the background to transparent by setting fill to none -->
+    <rect data-v-0dd9719b="" x="0" y="0" width="100%" height="100%" fill="none" class="background"></rect>
+    <rect data-v-0dd9719b="" x="0" y="0" width="100%" height="100%" fill="url(#watermark)" fill-opacity="1" class="watermarklayer"></rect>
+    <g data-v-0dd9719b="" class="iconmbgsvg" transform="translate(94.47500610351562,90.90023422241211)">
+        <g fill="#8686c1" hollow-target="textRect">
+            <g mask="url(#72370850-5c3d-4fb3-87b4-8e105b2023eb)">
+                <g>
+                    <rect fill="#8686c1" fill-opacity="0" stroke-width="2" x="0" y="0" width="70" height="68.1995323460639" class="image-rect"></rect>
+                    <svg x="0" y="0" width="70" height="68.1995323460639" filtersec="colorsb9319537203" class="image-svg-svg primary" style="overflow: visible;">
+                        <svg fill="#ff6390" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" style="shape-rendering:geometricPrecision;text-rendering:geometricPrecision;image-rendering:optimizeQuality;" viewBox="3.8421599864959717 5.299650192260742 91.14759826660156 88.8031005859375" x="0px" y="0px" fill-rule="evenodd" clip-rule="evenodd">
+              <defs></defs>
+                            <g>
+                <rect class="fil0" x="3.84216" y="5.29965" width="91.1476" height="88.8031"></rect>
+              </g>
+            </svg>
+                    </svg>
+                    <!---->
+                </g>
+            </g>
+            <g transform="translate(20.95000457763672,17.749765396118164)">
+                <g data-gra="path-name" fill-rule="" class="tp-name">
+                    <g transform="scale(1)">
+                        <g>
+                            <path d="M34.1 0L24.8-12.7C29-14.25 30.85-17.5 30.85-23.1 30.85-31.35 26.25-34.7 17.4-34.7L3.3-34.7 3.3 0 13.25 0 13.25-11.65 15.2-11.65 22.35 0ZM13.25-27.1L15.65-27.1C19.7-27.1 21.05-26.3 21.05-23.1 21.05-19.85 19.7-18.75 15.65-18.75L13.25-18.75ZM61.3-34.7L34.85-34.7 34.85-26 43.1-26 43.1 0 53 0 53-26 61.3-26ZM89.7-34.7L63.25-34.7 63.25-26 71.5-26 71.5 0 81.4 0 81.4-26 89.7-26ZM93.95 0L103.6 0 103.6-25.15 103.9-25.15 108.7-5.55 118.4-5.55 123.35-25.15 123.65-25.15 123.65 0 133.4 0 133.4-34.7 117.75-34.7 113.9-17.3 113.6-17.3 110.2-34.7 93.95-34.7Z" transform="translate(-3.299999952316284, 34.70000076293945)"></path>
+                        </g>
+                        <!---->
+                    </g>
+                </g>
+                <!---->
+            </g>
+            <!---->
+        </g>
+    </g>
+    <mask id="72370850-5c3d-4fb3-87b4-8e105b2023eb">
+        <g fill="white">
+            <g>
+                <rect fill-opacity="1" stroke-width="2" x="0" y="0" width="70" height="68.1995323460639" class="image-rect"></rect>
+                <svg x="0" y="0" width="70" height="68.1995323460639" filtersec="colorsb9319537203" class="image-svg-svg primary" style="overflow: visible;">
+                    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" style="shape-rendering:geometricPrecision;text-rendering:geometricPrecision;image-rendering:optimizeQuality;" viewBox="3.8421599864959717 5.299650192260742 91.14759826660156 88.8031005859375" x="0px" y="0px" fill-rule="evenodd" clip-rule="evenodd">
+            <defs></defs>
+                        <g>
+              <rect class="fil0" x="3.84216" y="5.29965" width="91.1476" height="88.8031"></rect>
+            </g>
+          </svg>
+                </svg>
+            </g>
+        </g>
+    </mask>
+    <defs v-gra="od"></defs>
+</svg>
