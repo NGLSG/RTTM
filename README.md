@@ -43,8 +43,8 @@ enum class TypeEnum {
 
 SERIALIZABLE_REGISTRATION {
     Enum_<TypeEnum>()
-        .enumerator("CLASS", TypeEnum::CLASS)
-        .enumerator("VARIABLE", TypeEnum::VARIABLE);
+        .value("CLASS", TypeEnum::CLASS)
+        .value("VARIABLE", TypeEnum::VARIABLE);
 }
 
 int main() {
