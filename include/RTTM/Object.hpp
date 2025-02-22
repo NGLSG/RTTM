@@ -56,7 +56,7 @@ namespace RTTM
         }
         catch (const std::bad_any_cast& e)
         {
-            throw "Can not cast " + GetType() + " to " + Demangle(typeid(T).name());
+            throw std::runtime_error("Can not cast " + GetType() + " to " + Demangle(typeid(T).name()));
         }
     }
 

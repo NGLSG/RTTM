@@ -62,15 +62,16 @@ namespace RTTM
 
         friend class Serializable;
 
-        Ref<Serializable> classVariable = nullptr;
+        //Ref<Serializable> classVariable = nullptr;
         size_t offset;
         std::string type;
+        std::string name;
         TypeEnum typeEnum;
-
+        bool isInit = false;
 
         void IsInit() const
         {
-            if (!instance)
+            if (!instance || !isInit)
             {
                 throw std::runtime_error("The structure has not been initialized");
             }
@@ -108,6 +109,8 @@ namespace RTTM
         std::vector<std::string> GetPropertyNames() const;
 
         Function GetMethod(const std::string& name);
+        void AttachInstance(const Serializable& inst) const;
+        void SetValue(const void* value) const;
 
         std::vector<std::string> GetMethodNames() const;
 
@@ -116,6 +119,14 @@ namespace RTTM
         template <typename T>
         T& As()
         {
+            if (Object::GetTypeName<T>() != type)
+            {
+                throw std::runtime_error("Type mismatch: " + type + " to " + Object::GetTypeName<T>());
+            }
+            if (typeEnum == TypeEnum::INSTANCE || typeEnum == TypeEnum::CLASS)
+            {
+                return *reinterpret_cast<T*>(instance.get());
+            }
             return *reinterpret_cast<T*>(reinterpret_cast<char*>(instance.get()) + offset);
         }
 
@@ -257,6 +268,7 @@ namespace RTTM
             newStruct->instance = CreateRef<Serializable>();
             *newStruct->instance = SerializableVar::Classes[type]->DeepClone();
             newStruct->type = type;
+            newStruct->name = type;
             newStruct->typeEnum = Type::TypeEnum::INSTANCE;
             return newStruct;
         }
@@ -272,6 +284,7 @@ namespace RTTM
             newStruct->instance = CreateRef<Serializable>();
             *newStruct->instance = SerializableVar::Classes[type]->DeepClone();
             newStruct->type = type;
+            newStruct->name = type;
             newStruct->typeEnum = Type::TypeEnum::CLASS;
             SerializableVar::Instances[uname] = newStruct;
             return newStruct;
@@ -335,9 +348,13 @@ namespace RTTM
     void Type::Create(Args... args)
     {
         ShouldBeClass();
-        if (typeEnum != TypeEnum::INSTANCE && classVariable)
+        isInit = true;
+        if (typeEnum != TypeEnum::INSTANCE) //&& classVariable)
         {
-            *classVariable = *SerializableVar::Classes[type]; // 只在操作子类时才会被赋予新的地址，防止与原始Instance脱节
+            auto ist = Serializable::Create(type, std::forward<Args>(args)...);
+            *instance = *ist; //成员类的初始化只拷贝
+            *instance = *SerializableVar::Classes[type];
+            /**classVariable = *SerializableVar::Classes[type]; // 只在操作子类时才会被赋予新的地址，防止与原始Instance脱节
             Ref<Serializable> inst = Serializable::Create(type, std::forward<Args>(args)...);
             *inst = *classVariable;
 
@@ -369,7 +386,7 @@ namespace RTTM
                         }
                     }
                 }
-            }
+            }*/
         }
         else
         {
@@ -377,25 +394,32 @@ namespace RTTM
             auto ist = Serializable::Create(type, std::forward<Args>(args)...);
             instance = ist;
             *instance = *SerializableVar::Classes[type];
-
-            for (auto& [memberName, memberType] : instance->Members)
+        }
+        for (auto& [memberName, memberType] : instance->Members)
+        {
+            auto refType = memberType.As<Ref<Type>>();
+            if (refType)
             {
-                auto refType = memberType.As<Ref<Type>>();
-                if (refType)
+                refType->instance = instance;
+                if (refType->GetTypeEnum() == TypeEnum::CLASS)
                 {
-                    refType->instance = instance;
-                    if (refType->GetTypeEnum() == TypeEnum::CLASS)
+                    auto class_ = std::dynamic_pointer_cast<Type>(refType);
+                    if (class_)
                     {
-                        auto class_ = std::dynamic_pointer_cast<Type>(refType);
-                        if (class_)
-                        {
-                            class_->classVariable.reset();
-                            class_->classVariable = CreateRef2<Serializable>(
-                                reinterpret_cast<Serializable*>(reinterpret_cast<char*>(instance.get()) + refType->
-                                    offset));
-                            *class_->classVariable = SerializableVar::Classes[refType->GetType()]->DeepClone();
-                            class_->Create();
-                        }
+                        /*
+                        class_->classVariable.reset();
+                        class_->classVariable = CreateRef2<Serializable>(
+                            reinterpret_cast<Serializable*>(reinterpret_cast<char*>(instance.get()) + refType->
+                                offset));
+                        *class_->classVariable = SerializableVar::Classes[refType->GetType()]->DeepClone();
+                        */
+                        class_->instance.reset();
+                        class_->instance = AliasCreate(instance,
+                                                       reinterpret_cast<Serializable*>(reinterpret_cast<char*>(instance.
+                                                               get()) + refType->
+                                                           offset));
+                        *class_->instance = SerializableVar::Classes[refType->GetType()]->DeepClone();
+                        class_->Create();
                     }
                 }
             }
@@ -407,8 +431,8 @@ namespace RTTM
     {
         ShouldBeClass();
         IsInit();
-        if (typeEnum == TypeEnum::CLASS)
-            return classVariable->Invoke<T>(name, std::forward<Args>(args)...);
+        /*if (typeEnum == TypeEnum::CLASS)
+            return classVariable->Invoke<T>(name, std::forward<Args>(args)...);*/
         return instance->Invoke<T>(name, std::forward<Args>(args)...);
     }
 
@@ -417,10 +441,10 @@ namespace RTTM
     {
         ShouldBeClass();
         IsInit();
-        if (!classVariable)
-            return instance->GetProperty<T>(name);
-        else
+        /*if (classVariable)
             return classVariable->GetProperty<T>(name);
+        else*/
+        return instance->GetProperty<T>(name);
     }
 
     template <typename T>
@@ -456,14 +480,15 @@ namespace RTTM
         if constexpr (std::is_base_of_v<Serializable, T>)
         {
             type->typeEnum = Type::TypeEnum::CLASS;
-            type->classVariable = AliasCreate<Serializable>(shared_from_this(), &(this->*converted));
+            /*type->classVariable = AliasCreate<Serializable>(shared_from_this(), &(this->*converted));
             type->classVariable->Members = SerializableVar::Classes[Object::GetTypeName<T>()]->Members;
-            type->classVariable->Methods = SerializableVar::Classes[Object::GetTypeName<T>()]->Methods;
+            type->classVariable->Methods = SerializableVar::Classes[Object::GetTypeName<T>()]->Methods;*/
         }
         else
         {
             type->typeEnum = Type::TypeEnum::VARIABLE;
         }
+        type->name = name;
         type->type = Object::GetTypeName<T>();
         type->offset = MembersOffset[name];
         Members[name] = type;
@@ -569,6 +594,7 @@ namespace RTTM
         *newStruct->instance = SerializableVar::Classes[type]->DeepClone();
         newStruct->typeEnum = Type::TypeEnum::INSTANCE;
         newStruct->type = type;
+        newStruct->name = type;
         return newStruct;
     }
 
@@ -586,6 +612,7 @@ namespace RTTM
         auto newStruct = CreateRef<Type>();
         newStruct->instance = CreateRef<T>();
         *newStruct->instance = SerializableVar::Classes[type]->DeepClone();
+        newStruct->name = type;
         newStruct->type = type;
         newStruct->typeEnum = Type::TypeEnum::INSTANCE;
         SerializableVar::Instances[uname] = newStruct;

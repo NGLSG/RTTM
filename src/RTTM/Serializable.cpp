@@ -81,8 +81,8 @@ namespace RTTM
     {
         ShouldBeClass();
         IsInit();
-        if (typeEnum == TypeEnum::CLASS)
-            return classVariable->GetPropertyNames();
+        /*if (typeEnum == TypeEnum::CLASS)
+            return classVariable->GetPropertyNames();*/
         return instance->GetPropertyNames();
     }
 
@@ -90,17 +90,42 @@ namespace RTTM
     {
         ShouldBeClass();
         IsInit();
-        if (typeEnum == TypeEnum::CLASS)
-            return classVariable->GetMethod(name);
+        /*if (typeEnum == TypeEnum::CLASS)
+            return classVariable->GetMethod(name);*/
         return instance->GetMethod(name);
+    }
+
+    void Type::AttachInstance(const Serializable& inst) const
+    {
+        for (auto& [name, ofst] : instance->MembersOffset)
+        {
+            char* rawClassVariable = reinterpret_cast<char*>(instance.get());
+            const char* rawInst = reinterpret_cast<const char*>(&inst);
+            *(rawClassVariable + ofst) = *(rawInst + ofst);
+        }
+    }
+
+    void Type::SetValue(const void* value) const
+    {
+        if (typeEnum == TypeEnum::INSTANCE || typeEnum == TypeEnum::CLASS)
+        {
+            AttachInstance(*reinterpret_cast<Serializable*>(const_cast<void*>(value)));
+        }
+        else
+        {
+            auto ofst = instance->MembersOffset[name];
+            char* rawClassVariable = reinterpret_cast<char*>(instance.get());
+            const char* rawInst = static_cast<const char*>(value);
+            *(rawClassVariable + ofst) = *(rawInst + ofst);
+        }
     }
 
     std::vector<std::string> Type::GetMethodNames() const
     {
         ShouldBeClass();
         IsInit();
-        if (typeEnum == TypeEnum::CLASS)
-            return classVariable->GetFunctionNames();
+        /*if (typeEnum == TypeEnum::CLASS)
+            return classVariable->GetFunctionNames();*/
         return instance->GetFunctionNames();
     }
 
@@ -108,8 +133,8 @@ namespace RTTM
     {
         ShouldBeClass();
         IsInit();
-        if (classVariable)
-            return classVariable->GetProperty(name);
+        /*if (classVariable)
+            return classVariable->GetProperty(name);*/
         return instance->GetProperty(name);
     }
 
@@ -126,8 +151,8 @@ namespace RTTM
 
     void* Type::RawPtr()
     {
-        if (classVariable)
-            return classVariable.get();
+        /*if (classVariable)
+            return classVariable.get();*/
         if (typeEnum == TypeEnum::VARIABLE)
             return reinterpret_cast<void*>(reinterpret_cast<char*>(instance.get()) + offset);
         return instance.get();
