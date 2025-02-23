@@ -29,6 +29,9 @@ namespace RTTM
         Members = other.Members;
         Methods = other.Methods;
         MembersOffset = other.MembersOffset;
+        MembersName = other.MembersName;
+        MethodsName = other.MethodsName;
+        MembersType = other.MembersType;
         return *this;
     }
 
@@ -43,24 +46,19 @@ namespace RTTM
         return f;
     }
 
-    std::vector<std::string> Serializable::GetPropertyNames()
+    std::vector<std::string> Serializable::GetPropertyNames() const
     {
-        std::vector<std::string> names;
-        for (const auto& [name, value] : Members)
-        {
-            names.push_back(name);
-        }
-        return names;
+        return MembersName;
     }
 
-    std::vector<std::string> Serializable::GetFunctionNames()
+    std::vector<std::string> Serializable::GetFunctionNames() const
     {
-        std::vector<std::string> names;
-        for (const auto& [name, value] : Methods)
-        {
-            names.push_back(name);
-        }
-        return names;
+        return MethodsName;
+    }
+
+    std::vector<Ref<Type>> Serializable::GetProperties() const
+    {
+        return MembersType;
     }
 
     Ref<Type> Serializable::GetProperty(const std::string& name)
@@ -95,28 +93,33 @@ namespace RTTM
         return instance->GetMethod(name);
     }
 
-    void Type::AttachInstance(const Serializable& inst) const
+    void Type::AttachInstance(Serializable* inst) const
     {
-        for (auto& [name, ofst] : instance->MembersOffset)
+        /*for (auto& [name, ofst] : instance->MembersOffset)
         {
             char* rawClassVariable = reinterpret_cast<char*>(instance.get());
-            const char* rawInst = reinterpret_cast<const char*>(&inst);
+            char* rawInst = reinterpret_cast<char*>(inst);
+            std::cout << *(rawInst + ofst) << std::endl;
             *(rawClassVariable + ofst) = *(rawInst + ofst);
-        }
+        }*/
+        inst->MembersOffset = instance->MembersOffset;
+        inst->Members = instance->Members;
+        inst->Methods = instance->Methods;
+        memcpy(instance.get(), inst, size);
     }
 
     void Type::SetValue(const void* value) const
     {
         if (typeEnum == TypeEnum::INSTANCE || typeEnum == TypeEnum::CLASS)
         {
-            AttachInstance(*reinterpret_cast<Serializable*>(const_cast<void*>(value)));
+            AttachInstance(static_cast<Serializable*>(const_cast<void*>(value)));
         }
         else
         {
             auto ofst = instance->MembersOffset[name];
             char* rawClassVariable = reinterpret_cast<char*>(instance.get());
             const char* rawInst = static_cast<const char*>(value);
-            *(rawClassVariable + ofst) = *(rawInst + ofst);
+            memcpy(rawClassVariable + ofst, rawInst, size);
         }
     }
 
@@ -138,6 +141,11 @@ namespace RTTM
         return instance->GetProperty(name);
     }
 
+    std::vector<Ref<Type>> Type::GetProperties() const
+    {
+        return instance->GetProperties();
+    }
+
     std::string Type::GetType()
     {
         return type;
@@ -148,6 +156,16 @@ namespace RTTM
         return typeEnum;
     }
 
+
+    bool Type::IsClass() const
+    {
+        return typeEnum == TypeEnum::CLASS || typeEnum == TypeEnum::INSTANCE;
+    }
+
+    std::string Type::GetName() const
+    {
+        return name;
+    }
 
     void* Type::RawPtr()
     {
