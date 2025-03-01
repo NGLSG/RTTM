@@ -90,13 +90,13 @@ namespace RTTM
 
         bool IsClass() const;
 
-        std::string GetName() const;
+        const std::string& GetName() const;
 
         Ref<Serializable> instance;
 
         Type() = default;
 
-        void* RawPtr();
+        void* RawPtr() const;
 
         template <typename T>
         bool Is() const
@@ -111,14 +111,15 @@ namespace RTTM
         T Invoke(const std::string& name, Args... args);
         template <typename T>
         T& GetProperty(const std::string& name);
-        Ref<Type> GetProperty(const std::string& name);
-        std::vector<Ref<Type>> GetProperties() const;
+        Ref<Type> GetProperty(const std::string& name) const;
+        const std::vector<Ref<Type>>& GetProperties() const noexcept;
 
         std::vector<std::string> GetPropertyNames() const;
 
         Function GetMethod(const std::string& name);
         void AttachInstance(Serializable* inst) const;
-        void SetValue(const void* value) const;
+        template <typename T>
+        void SetValue(const T& value) const;
 
         std::vector<std::string> GetMethodNames() const;
 
@@ -127,21 +128,21 @@ namespace RTTM
         template <typename T>
         T& As()
         {
-            if (typeEnum == TypeEnum::INSTANCE || typeEnum == TypeEnum::CLASS)
+            if ((typeEnum == TypeEnum::INSTANCE || typeEnum == TypeEnum::CLASS) &&
+                std::is_base_of_v<Serializable, T>)
             {
-                if (std::is_base_of_v<Serializable, T>)
-                {
-                    return *reinterpret_cast<T*>(instance.get());
-                }
+                return *reinterpret_cast<T*>(instance.get());
             }
-            if (Object::GetTypeName<T>() != type)
+
+            const auto expectedTypeName = Object::GetTypeName<T>();
+
+            if (expectedTypeName != type)
             {
-                throw std::runtime_error("Type mismatch: " + type + " to " + Object::GetTypeName<T>());
+                throw std::runtime_error("Type mismatch: " + type + " to " + expectedTypeName);
             }
 
             return *reinterpret_cast<T*>(reinterpret_cast<char*>(instance.get()) + offset);
         }
-
         std::string GetType();
 
         TypeEnum GetTypeEnum() const;
@@ -187,7 +188,7 @@ namespace RTTM
     class Serializable : public std::enable_shared_from_this<Serializable>
     {
     private:
-        std::unordered_map<std::string, Object> Members;
+        std::unordered_map<std::string, Ref<Type>> Members;
         std::unordered_map<std::string, size_t> MembersOffset;
         std::unordered_map<std::string, Ref<IFunctionWrapper>> Methods;
         std::vector<std::string> MembersName;
@@ -210,7 +211,7 @@ namespace RTTM
 
         std::vector<std::string> GetFunctionNames() const;
 
-        std::vector<Ref<Type>> GetProperties() const;
+        const std::vector<Ref<Type>>& GetProperties() noexcept;
         Ref<Type> GetProperty(const std::string& name);
 
         template <typename T, typename U>
@@ -364,16 +365,15 @@ namespace RTTM
     {
         ShouldBeClass();
         isInit = true;
-        if (typeEnum != TypeEnum::INSTANCE) //&& classVariable)
+        if (typeEnum != TypeEnum::INSTANCE)
         {
             *instance = *Serializable::Create(type, std::forward<Args>(args)...); //成员类的初始化只拷贝
-            *instance = *SerializableVar::Classes[type];
         }
         else
         {
             instance = AliasCreate(instance, Serializable::Create(type, std::forward<Args>(args)...));
-            *instance = *SerializableVar::Classes[type];
         }
+        *instance = *SerializableVar::Classes[type];
         for (auto& refType : instance->GetProperties())
         {
             refType->instance = instance;
@@ -385,7 +385,7 @@ namespace RTTM
                                                    reinterpret_cast<Serializable*>(reinterpret_cast<char*>(instance.
                                                            get()) + refType->
                                                        offset));
-                    *class_->instance = SerializableVar::Classes[refType->GetType()]->DeepClone();
+                    *class_->instance = *SerializableVar::Classes[refType->GetType()];
                     class_->Create();
                 }
             }
@@ -411,6 +411,20 @@ namespace RTTM
             return classVariable->GetProperty<T>(name);
         else*/
         return instance->GetProperty<T>(name);
+    }
+
+    template <typename T>
+    void Type::SetValue(const T& value) const
+    {
+        if constexpr (std::is_base_of_v<Serializable, T>)
+        {
+            AttachInstance(value);
+        }
+        else
+        {
+            auto ofst = instance->MembersOffset[name];
+            *reinterpret_cast<T*>(reinterpret_cast<char*>(instance.get()) + ofst) = value;
+        }
     }
 
     template <typename T>
@@ -603,22 +617,7 @@ namespace RTTM
         else
             return SerializableVar::Factories[type][Object::GetTypeName<Args...>()]->Create(
                 std::forward<Args>(args)...);
-    } /*    template <typename... Args>
-    Ref<Serializable> Serializable::Create(const std::string& type, Args... args)
-    {
-        if (SerializableVar::Factories.find(type) == SerializableVar::Factories.end())
-        {
-            std::cout << "The structure has not been registered: " << type << std::endl;
-            return nullptr;
-        }
-        if constexpr (sizeof...(Args) == 0)
-        {
-            return SerializableVar::Factories[type]["default"]->Create();
-        }
-        else
-            return SerializableVar::Factories[type][Object::GetTypeName<Args...>()]->Create(
-                std::forward<Args>(args)...);
-    }*/
+    }
 
     template <typename T>
     void Serializable::RegisterVariable(const std::string& name, const T& value)

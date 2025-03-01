@@ -56,7 +56,7 @@ namespace RTTM
         return MethodsName;
     }
 
-    std::vector<Ref<Type>> Serializable::GetProperties() const
+    const std::vector<Ref<Type>>& Serializable::GetProperties() noexcept
     {
         return MembersType;
     }
@@ -66,7 +66,7 @@ namespace RTTM
         auto it = Members.find(name);
         if (it == Members.end())
             throw std::runtime_error("Property not found: " + name);
-        return it->second.As<Ref<Type>>();
+        return it->second;
     }
 
 
@@ -108,21 +108,6 @@ namespace RTTM
         memcpy(instance.get(), inst, size);
     }
 
-    void Type::SetValue(const void* value) const
-    {
-        if (typeEnum == TypeEnum::INSTANCE || typeEnum == TypeEnum::CLASS)
-        {
-            AttachInstance(static_cast<Serializable*>(const_cast<void*>(value)));
-        }
-        else
-        {
-            auto ofst = instance->MembersOffset[name];
-            char* rawClassVariable = reinterpret_cast<char*>(instance.get());
-            const char* rawInst = static_cast<const char*>(value);
-            memcpy(rawClassVariable + ofst, rawInst, size);
-        }
-    }
-
     std::vector<std::string> Type::GetMethodNames() const
     {
         ShouldBeClass();
@@ -132,7 +117,7 @@ namespace RTTM
         return instance->GetFunctionNames();
     }
 
-    Ref<Type> Type::GetProperty(const std::string& name)
+    Ref<Type> Type::GetProperty(const std::string& name) const
     {
         ShouldBeClass();
         IsInit();
@@ -141,7 +126,7 @@ namespace RTTM
         return instance->GetProperty(name);
     }
 
-    std::vector<Ref<Type>> Type::GetProperties() const
+    const std::vector<Ref<Type>>& Type::GetProperties() const noexcept
     {
         return instance->GetProperties();
     }
@@ -162,12 +147,12 @@ namespace RTTM
         return typeEnum == TypeEnum::CLASS || typeEnum == TypeEnum::INSTANCE;
     }
 
-    std::string Type::GetName() const
+    const std::string& Type::GetName() const
     {
         return name;
     }
 
-    void* Type::RawPtr()
+    void* Type::RawPtr() const
     {
         /*if (classVariable)
             return classVariable.get();*/
