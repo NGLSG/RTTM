@@ -1,5 +1,5 @@
-#ifndef SERIALIZABLE_H
-#define SERIALIZABLE_H
+#ifndef RTTMSERIALIZABLE_H
+#define RTTMSERIALIZABLE_H
 
 #include <functional>
 #include <iostream>

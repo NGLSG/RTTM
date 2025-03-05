@@ -1,5 +1,5 @@
-#ifndef FUNCTION_H
-#define FUNCTION_H
+#ifndef RTTMFUNCTION_H
+#define RTTMFUNCTION_H
 #include <functional>
 #include <stdexcept>
 

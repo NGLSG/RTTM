@@ -1,5 +1,5 @@
-#ifndef FACTORY_H
-#define FACTORY_H
+#ifndef RTTMFACTORY_H
+#define RTTMFACTORY_H
 #include <cstdarg>
 #include <functional>
 #include <memory>

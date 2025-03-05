@@ -1,5 +1,5 @@
-#ifndef OBJECT_H
-#define OBJECT_H
+#ifndef RTTMOBJECT_H
+#define RTTMOBJECT_H
 
 #include <any>
 #include <iostream>
