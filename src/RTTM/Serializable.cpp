@@ -24,6 +24,66 @@ namespace RTTM
         return res;
     }
 
+    void Serializable::SetMembers(const std::unordered_map<std::string, Ref<Type>>& members)
+    {
+        Members.insert(members.begin(), members.end());
+    }
+
+    void Serializable::SetMethods(const std::unordered_map<std::string, Ref<IFunctionWrapper>>& methods)
+    {
+        Methods.insert(methods.begin(), methods.end());
+    }
+
+    void Serializable::SetMembersOffset(const std::unordered_map<std::string, size_t>& offset)
+    {
+        MembersOffset.insert(offset.begin(), offset.end());
+    }
+
+    void Serializable::SetMembersName(const std::vector<std::string>& name)
+    {
+        MembersName.insert(MembersName.end(), name.begin(), name.end());
+    }
+
+    void Serializable::SetMethodsName(const std::vector<std::string>& name)
+    {
+        MethodsName.insert(MethodsName.end(), name.begin(), name.end());
+    }
+
+    void Serializable::SetMembersType(const std::vector<Ref<Type>>& type)
+    {
+        MembersType.insert(MembersType.end(), type.begin(), type.end());
+    }
+
+    std::unordered_map<std::string, Ref<Type>>& Serializable::GetMembers()
+    {
+        return Members;
+    }
+
+    std::unordered_map<std::string, size_t>& Serializable::GetMembersOffset()
+    {
+        return MembersOffset;
+    }
+
+    std::unordered_map<std::string, Ref<IFunctionWrapper>>& Serializable::GetMethods()
+    {
+        return Methods;
+    }
+
+    std::vector<std::string>& Serializable::GetMembersName()
+    {
+        return MembersName;
+    }
+
+    std::vector<std::string>& Serializable::GetMethodsName()
+    {
+        return MethodsName;
+    }
+
+    std::vector<Ref<Type>>& Serializable::GetMembersType()
+    {
+        return MembersType;
+    }
+
     Serializable& Serializable::operator=(const Serializable& other)
     {
         Members = other.Members;

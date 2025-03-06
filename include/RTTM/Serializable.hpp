@@ -143,6 +143,7 @@ namespace RTTM
 
             return *reinterpret_cast<T*>(reinterpret_cast<char*>(instance.get()) + offset);
         }
+
         std::string GetType();
 
         TypeEnum GetTypeEnum() const;
@@ -197,6 +198,19 @@ namespace RTTM
         friend class Type;
 
     public:
+        void SetMembers(const std::unordered_map<std::string, Ref<Type>>& members);
+        void SetMethods(const std::unordered_map<std::string, Ref<IFunctionWrapper>>& methods);
+        void SetMembersOffset(const std::unordered_map<std::string, size_t>& offset);
+        void SetMembersName(const std::vector<std::string>& name);
+        void SetMethodsName(const std::vector<std::string>& name);
+        void SetMembersType(const std::vector<Ref<Type>>& type);
+
+        std::unordered_map<std::string, Ref<Type>>& GetMembers();
+        std::unordered_map<std::string, size_t>& GetMembersOffset();
+        std::unordered_map<std::string, Ref<IFunctionWrapper>>& GetMethods();
+        std::vector<std::string>& GetMembersName();
+        std::vector<std::string>& GetMethodsName();
+        std::vector<Ref<Type>>& GetMembersType();
         virtual ~Serializable() = default;
 
         explicit Serializable() = default;
@@ -342,6 +356,9 @@ namespace RTTM
 
         template <typename R, typename... Args>
         Structure_& method(const char* name, R (T::*memFunc)(Args...));
+
+        template <typename B>
+        Structure_& base();
     };
 
     template <typename T>
@@ -696,6 +713,20 @@ namespace RTTM
     Structure_<T>& Structure_<T>::method(const char* name, R (T::*memFunc)(Args...))
     {
         serialized->method(name, memFunc);
+        return *this;
+    }
+
+    template <typename T>
+    template <typename B>
+    Structure_<T>& Structure_<T>::base()
+    {
+        auto base = SerializableVar::Classes[Object::GetTypeName<B>()];
+        serialized->SetMembers(base->GetMembers());
+        serialized->SetMethods(base->GetMethods());
+        serialized->SetMembersOffset(base->GetMembersOffset());
+        serialized->SetMembersName(base->GetMembersName());
+        serialized->SetMethodsName(base->GetMethodsName());
+        serialized->SetMembersType(base->GetMembersType());
         return *this;
     }
 
