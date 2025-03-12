@@ -57,3 +57,6 @@ add_custom_target(install_all
 
 # Make install_all the default target
 add_custom_target(default ALL DEPENDS install_all)
+
+add_library(RTTM INTERFACE)
+target_link_libraries(RTTM INTERFACE RTTM_static)

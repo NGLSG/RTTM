@@ -52,7 +52,7 @@ namespace RTTM
     private:
         std::shared_ptr<IFunctionWrapper> function;
         std::string name;
-        Serializable* instance = nullptr;
+        void* instance = nullptr;
         bool isMemberFunction = false;
 
         template <typename... Args>
@@ -61,7 +61,8 @@ namespace RTTM
     public:
         friend class Serializable;
 
-        Function(const std::shared_ptr<IFunctionWrapper>& func, const std::string& name = "");
+        Function(const std::shared_ptr<IFunctionWrapper>& func, const std::string& name = "", void* instance = nullptr,
+                 bool isMemberFunction = false);
 
         bool IsValid() const;
 
@@ -80,11 +81,11 @@ namespace RTTM
         Function& operator=(const Function& other);
     };
 
-    template <typename ... Args>
+    template <typename... Args>
     std::string Function::GetArgumentTypes()
     {
         std::string result;
-        ((result += Object::Demangle(typeid(Args).name()) + ", "), ...);
+        ((result += Demangle(typeid(Args).name()) + ", "), ...);
         if (!result.empty())
         {
             result.erase(result.size() - 2);
@@ -92,8 +93,9 @@ namespace RTTM
         return result;
     }
 
-    inline Function::Function(const std::shared_ptr<IFunctionWrapper>& func, const std::string& name): function(func),
-        name(name)
+    inline Function::Function(const std::shared_ptr<IFunctionWrapper>& func, const std::string& name, void* instance,
+                              bool isMemberFunction): function(func), name(name), instance(instance),
+                                                      isMemberFunction(isMemberFunction)
     {
     }
 
@@ -109,14 +111,14 @@ namespace RTTM
 
     inline Function::Function() = default;
 
-    template <typename R, typename ... Args>
+    template <typename R, typename... Args>
     R Function::Invoke(Args... args)
     {
         if (isMemberFunction)
         {
             if (!instance)
                 throw std::runtime_error("Instance is null for member function: " + name);
-            auto wrapper = std::dynamic_pointer_cast<FunctionWrapper<R, Serializable*, Args...>>(function);
+            auto wrapper = std::dynamic_pointer_cast<FunctionWrapper<R, void*, Args...>>(function);
             if (!wrapper)
                 throw std::runtime_error(
                     "Function signature mismatch for: " + name + "Arguments are: " + GetArgumentTypes<Args...>());
@@ -137,7 +139,7 @@ namespace RTTM
         return name;
     }
 
-    template <typename T, typename ... Args>
+    template <typename T, typename... Args>
     T Function::operator()(Args... args)
     {
         return Invoke<T>(std::forward<Args>(args)...);
