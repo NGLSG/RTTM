@@ -1,3 +1,4 @@
+```markdown
 <div align="center">
   <img src="imgs/logo.svg" alt="Logo" />
 </div>
@@ -6,84 +7,83 @@
 
 # RTTM (Runtime Turbo Mirror)
 
-RTTM (Runtime Turbo Mirror) is a lightweight dynamic reflection library built on the C++17 standard library with no external dependencies. It compiles with MSVC, GCC, and Clang. The library enables runtime reflection for classes, structures, enums, variables, and functions, and supports dynamic object creation and method invocation.
+RTTM (Runtime Turbo Mirror) is a lightweight dynamic reflection library built using the C++17 standard library with no external dependencies. It is designed for game engines or any other high-performance applications that require runtime reflection. RTTM supports MSVC, GCC, and Clang compilers. The library allows reflection on classes, structures, enums, variables, and functions at runtime, and supports dynamic object creation and method invocation.
 
 ## Features
 
-- [x] Built on the C++17 standard library with no external dependencies.
-- [x] Compatible with MSVC, GCC, and Clang.
-- [x] Register enums, structures, template classes, as well as global variables and functions.
-- [x] Dynamic object creation and member function invocation.
-- [x] Superior performance: benchmark tests show lower invocation overhead compared to RTTR.
-- [x] User-friendly: simple and intuitive API with support for chain calls.
+- **Built on C++17 with no external dependencies**
+- **Compatible with MSVC, GCC, and Clang**
+- **Register enums, structures, templated classes, as well as global variables and functions**
+- **Dynamic object creation and member function calls**
+- **High performance: benchmarks show lower call latency compared to RTTR**
+- **Ease of Use: Simple and intuitive API with support for method chaining**
 
-## Example Usage
+## Usage Examples
 
-This section demonstrates the usage of the library modules and provides complete example files.
+This section demonstrates how to use various modules of RTTM with complete code examples to help you get started quickly.
 
-### 1. Reflection Registration and Object Operations
+### 1. Dynamic Reflection Registration and Object Manipulation
 
-The operations for `struct` and `class` are the same.
+Reflection for both structures and classes is handled in the same way.
 
-#### Include Header
+#### Include Header File
 
-```cpp name=examples/reflect_usage.cpp
+```cpp
 #include <iostream>
-#include "RTTM/Serializable.hpp" // Include RTTM header
-using namespace RTTM;             // Use RTTM namespace
+#include "RTTM/RTTM.hpp" // Include the RTTM header
+using namespace RTTM;    // Use the RTTM namespace
 ```
 
-#### Enum Type Registration
+#### Enum Registration
 
-```cpp name=examples/reflect_usage.cpp
+```cpp
 enum class TypeEnum {
     CLASS = -1,
     VARIABLE,
 };
 
-SERIALIZABLE_REGISTRATION {
+RTTM_REGISTRATION {
     Enum_<TypeEnum>()
         .value("CLASS", TypeEnum::CLASS)
         .value("VARIABLE", TypeEnum::VARIABLE);
 }
 
 int main() {
-    IEnum type = IEnum::Get<TypeEnum>();
-    TypeEnum variable = type->GetValue<TypeEnum>("VARIABLE");
+    auto type = Enum::Get<TypeEnum>();
+    TypeEnum variable = type.GetValue("VARIABLE");
     return 0;
 }
 ```
 
-#### Creating a Global Variable
+#### Global Variables and Global Functions
 
-```cpp name=examples/reflect_usage.cpp
-// Create a global variable
-Serializable::RegisterVariable("var", 0);
-// Get the value of the global variable
-int var = *Serializable::GetVariable<int>("var");
-// Set the value of the global variable
-*Serializable::GetVariable<int>("var") = 20;
-```
+```cpp
+// Register a global variable
+Global::RegisterVariable("var", 0);
 
-#### Creating a Global Function
+// Get and set the global variable's value
+int var = Global::GetVariable<int>("var");
+Global::GetVariable<int>("var") = 20;
 
-```cpp name=examples/reflect_usage.cpp
-// Define a regular function
+// Define and register a global function
 int foo(int a) {
     return a;
 }
-Serializable::RegisterGlobalMethod("foo", foo); // Register global function
-Function fooFunc = Serializable::GetGlobalMethod("foo"); // Get global function
-int result = fooFunc.Invoke<int>(10); // Call global function
+Global::RegisterGlobalMethod("foo", foo);
 
-// Register a lambda function as a global function
-Serializable::RegisterGlobalMethod("fooLambda", [](int a) { return a; });
+Method<int> fooFunc = Global::GetMethod<int(int)>("foo");
+int result = fooFunc(10); // Invoke the global function
+
+// Register a global function using a lambda expression
+Global::RegisterGlobalMethod("fooLambda", [](int a) { return a; });
 ```
 
-#### Creating a Reflectable Class
+#### Registering and Using Reflectable Classes
 
-```cpp name=examples/reflect_usage.cpp
-class A : public Serializable {
+Suppose we have a class that requires reflection:
+
+```cpp
+class A {
 public:
     A() = default;
     A(int num) : num(num) {}
@@ -93,153 +93,245 @@ public:
 };
 ```
 
-#### Registration Methods
+**Registration:**
 
-1. **Register Outside a Function**
+1. **Using the macro outside a function:**
 
-```cpp name=examples/reflect_usage.cpp
-SERIALIZABLE_REGISTRATION {
-    Structure_<A>()          // Register class A
-        .property("num", &A::num)  // Register property num
-        .method("foo", &A::foo)    // Register method foo
-        .method("mul", &A::mul)    // Register method mul
-        .constructor<>()           // Register default constructor
-        .constructor<int>();       // Register constructor with parameters
-}
+    ```cpp
+    RTTM_REGISTRATION {
+        Registry_<A>()          // Register class A
+            .property("num", &A::num)  // Register property num
+            .method("foo", &A::foo)    // Register method foo
+            .method("mul", &A::mul)    // Register method mul
+            .constructor<int>();       // Register constructor with an integer parameter
+    }
+    ```
+
+2. **Registering within a function:**
+
+    ```cpp
+    int main(){
+        Registry_<A>()          // Register class A
+            .property("num", &A::num)  // Register property num
+            .method("foo", &A::foo)    // Register method foo
+            .method("mul", &A::mul)    // Register method mul     
+            .constructor<int>();       // Register constructor with an integer parameter
+        return 0;
+    }
+    ```
+
+**Creating and Using Objects:**
+
+```cpp
+// Create objects by type name
+Ref<RType> typeByName = RType::Get("A");
+
+// Create objects by type
+Ref<RType> typeByType = RType::Get<A>();
+
+// Instantiate objects (using default or parameterized constructors)
+typeByName->Create();
+typeByName->Create(10);
+
+// Get property values
+Ref<RType> numProp = typeByName->GetProperty("num");
+int numValue = typeByName->GetProperty<int>("num");
+int numValue2 = numProp->As<int>();
+
+// Invoke methods by name
+int resultFoo = typeByName->Invoke<int>("foo");
+
+// Or, obtain a method object and invoke it
+auto mulMethod = typeByName->GetMethod<int(int)>("mul");
+int resultMul = mulMethod(2);
 ```
 
-2. **Register Inside a Function**
+#### ECS Implementation Example
 
-```cpp name=examples/reflect_usage.cpp
-int main(){
-    Structure_<A>()          // Register class A
-        .property("num", &A::num)  // Register property num
-        .method("foo", &A::foo)    // Register method foo
-        .method("mul", &A::mul)    // Register method mul
-        .constructor<>()           // Register default constructor
-        .constructor<int>();       // Register constructor with parameters
+Below is an example demonstrating how to define components and entities, and retrieve component instances using reflection.
+
+```cpp
+#include <RTTM/RTTM.hpp>
+#include <iostream>
+#include <cmath>
+#include <RTTM/Entity.hpp>
+
+class Transform {
+public:
+    struct {
+        float x, y, z;
+    } position;
+
+    struct {
+        float x, y, z;
+    } rotation;
+
+    struct {
+        float x, y, z;
+    } scale;
+
+    // Compute the transformation matrix combining translation, rotation (using ZYX order for Euler angles), and scaling.
+    float* GetMatrix() {
+        float* m = new float[16];
+
+        float radX = rotation.x;
+        float radY = rotation.y;
+        float radZ = rotation.z;
+
+        float cx = std::cos(radX);
+        float sx = std::sin(radX);
+        float cy = std::cos(radY);
+        float sy = std::sin(radY);
+        float cz = std::cos(radZ);
+        float sz = std::sin(radZ);
+
+        float r00 = cz * cy;
+        float r01 = cz * sy * sx - sz * cx;
+        float r02 = cz * sy * cx + sz * sx;
+
+        float r10 = sz * cy;
+        float r11 = sz * sy * sx + cz * cx;
+        float r12 = sz * sy * cx - cz * sx;
+
+        float r20 = -sy;
+        float r21 = cy * sx;
+        float r22 = cy * cx;
+
+        // Apply scaling to the rotation matrix
+        r00 *= scale.x; r01 *= scale.x; r02 *= scale.x;
+        r10 *= scale.y; r11 *= scale.y; r12 *= scale.y;
+        r20 *= scale.z; r21 *= scale.z; r22 *= scale.z;
+
+        // Fill the 4x4 matrix in row-major order
+        m[0]  = r00; m[1]  = r01; m[2]  = r02; m[3]  = 0.0f;
+        m[4]  = r10; m[5]  = r11; m[6]  = r12; m[7]  = 0.0f;
+        m[8]  = r20; m[9]  = r21; m[10] = r22; m[11] = 0.0f;
+        m[12] = position.x; m[13] = position.y; m[14] = position.z; m[15] = 1.0f;
+
+        return m;
+    }
+};
+
+REQUIRE_COMPONENT(Transform)
+
+class GameObject : public RTTM::Entity {
+public:
+    Transform& transform() {
+        return GetComponent<Transform>();
+    }
+};
+
+int main() {
+    try {
+        GameObject gameObject;
+        Transform& transform = gameObject.transform();
+
+        transform.position = {1.0f, 2.0f, 3.0f};
+        transform.rotation = {0.0f, 0.0f, 0.0f};
+        transform.scale    = {1.0f, 1.0f, 1.0f};
+
+        float* matrix = transform.GetMatrix();
+
+        std::cout << "Transformation Matrix:" << std::endl;
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                std::cout << matrix[i * 4 + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+
+        // Sample output:
+        // Transformation Matrix:
+        // 1 0 0 0
+        // 0 1 0 0
+        // -0 0 1 0
+        // 1 2 3 1
+
+        delete[] matrix;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
     return 0;
 }
 ```
 
-#### Creating an Object
-
-- **By Type Name**
-
-```cpp name=examples/reflect_usage.cpp
-RTTIType type = Serializable::GetByName("A"); // Get type by name
-```
-
-- **By Type**
-
-```cpp name=examples/reflect_usage.cpp
-RTTIType type = Serializable::Get<A>(); // Get type using template
-```
-
-#### Instantiating an Object
-
-```cpp name=examples/reflect_usage.cpp
-type->Create();    // Create object using default constructor
-type->Create(10);  // Create object using constructor with parameters
-```
-
-#### Getting a Property
-
-```cpp name=examples/reflect_usage.cpp
-RTTIType numProp = type->GetProperty("num");    // Get property
-int numValue = type->GetProperty<int>("num");     // Get property value
-int numValue2 = numProp->As<int>();               // Get property value
-```
-
-#### Invoking a Method
-
-1. **By Method Name**
-
-```cpp name=examples/reflect_usage.cpp
-int result = type->Invoke<int>("foo"); // Call method foo
-```
-
-2. **By Obtaining the Method Object**
-
-```cpp name=examples/reflect_usage.cpp
-Function mul = type->GetMethod("mul");  // Get method mul
-int result = mul.Invoke<int>(2);          // Call method mul
-```
-
 ### 2. Benchmark Tests
 
-The following examples compare the performance of RTTM and RTTR in method invocation.
+The benchmark tests compare RTTM with RTTR in terms of performance for reflection-based method calls and serialization/deserialization tasks.
 
 #### RTTM Benchmark Test
 
-```cpp name=examples/benchmark_rttm.cpp
+```cpp
 #include <chrono>
 #include <iostream>
-#include "RTTM/Serializable.hpp"
+#include "RTTM/RTTM.hpp"
 
 using namespace RTTM;
 
-class A : public Serializable {
+class A {
 public:
     int num = 0;
     A() = default;
-    A(int num) { this->num = num; }
+    A(int num) : num(num) {}
+
     int Add(int a) {
         num += a;
         return num;
     }
 };
 
-class B : public Serializable {
+class B {
 public:
     A a;
-    B() = default;
 };
 
-class C : public Serializable {
+class C {
 public:
     B b;
-    C() = default;
 };
 
-SERIALIZABLE_REGISTRATION {
-    Structure_<A>()
+RTTM_REGISTRATION {
+    Registry_<A>()
         .property("num", &A::num)
-        .constructor<>()
         .constructor<int>()
         .method("Add", &A::Add);
-    Structure_<B>()
-        .property("a", &B::a)
-        .constructor<>();
+    Registry_<B>()
+        .property("a", &B::a);
 }
 
 int main() {
-    Structure_<C>().property("b", &C::b).constructor<>();
-    RTTIType ct = Serializable::GetByName("C");
+    Registry_<C>().property("b", &C::b);
+    Ref<RType> ct = RType::Get("C");
     if (!ct) {
-        std::cerr << "Failed to get type C" << std::endl;
+        std::cerr << "Unable to retrieve type C" << std::endl;
         return -1;
     }
     ct->Create();
-    Function add = ct->GetProperty("b")->GetProperty("a")->GetMethod("Add");
+    auto add = ct->GetProperty("b")
+                  ->GetProperty("a")
+                  ->GetMethod<int(int)>("Add");
     if (!add.IsValid()) {
-        std::cerr << "Failed to get method Add" << std::endl;
+        std::cerr << "Unable to retrieve method Add" << std::endl;
         return -1;
     }
     const int iterations = 1000000000;
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
-        int result = add.Invoke<int>(1);
+        int result = add(1);
         (void)result;
     }
     auto end = std::chrono::high_resolution_clock::now();
     double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-    
+
     std::cout << "Final result: " 
-              << ct->GetProperty("b")->GetProperty("a")->GetProperty("num")->As<int>() 
+              << ct->GetProperty("b")
+                    ->GetProperty("a")
+                    ->GetProperty("num")
+                    ->As<int>() 
               << std::endl;
-    std::cout << "[RTTM] Execution time for " << iterations 
-              << " calls: " << elapsed_ms << " ms" << std::endl;
+    std::cout << "[RTTM] Executing " << iterations 
+              << " method calls took " << elapsed_ms << " ms" << std::endl;
     std::cout << "[RTTM] Average time per call: " 
               << (elapsed_ms / iterations) << " ms" << std::endl;
     return 0;
@@ -248,7 +340,7 @@ int main() {
 
 #### RTTR Benchmark Test
 
-```cpp name=examples/benchmark_rttr.cpp
+```cpp
 #include <chrono>
 #include <iostream>
 #include <rttr/registration>
@@ -297,7 +389,7 @@ int main() {
     type typeC = type::get_by_name("C");
     variant varC = typeC.create();
     if (!varC.is_valid()) {
-        cerr << "Failed to create an instance of C" << endl;
+        cerr << "Unable to create an instance of type C" << endl;
         return -1;
     }
     property propB = typeC.get_property("b");
@@ -308,14 +400,14 @@ int main() {
     type typeA = type::get_by_name("A");
     variant varA_new = typeA.create({10});
     if (!varA_new.is_valid()) {
-        cerr << "Failed to create an instance of A with parameter" << endl;
+        cerr << "Unable to create an instance of type A with parameters" << endl;
         return -1;
     }
     propA.set_value(varB, varA_new);
     varA = propA.get_value(varB);
     method methAdd = typeA.get_method("Add");
     if (!methAdd.is_valid()) {
-        cerr << "Failed to get method Add" << endl;
+        cerr << "Unable to retrieve method Add" << endl;
         return -1;
     }
     auto start = chrono::high_resolution_clock::now();
@@ -328,50 +420,199 @@ int main() {
     property propNum = typeA.get_property("num");
     variant varNum = propNum.get_value(varA);
     int finalResult = varNum.get_value<int>();
-    
+
     cout << "Final result: " << finalResult << endl;
-    cout << "[RTTR] Execution time for " << iterations 
-         << " calls: " << elapsed_ms << " ms" << endl;
+    cout << "[RTTR] Executing " << iterations 
+         << " method calls took " << elapsed_ms << " ms" << endl;
     cout << "[RTTR] Average time per call: " 
          << (elapsed_ms / iterations) << " ms" << endl;
     return 0;
 }
 ```
 
-## Benchmark Results
+### 3. Serialization and Deserialization
 
-```shell
-.\RttrTest.exe
-Final result: 1000000000
-[RTTR] Execution time for 1000000000 calls: 36538.7 ms
-[RTTR] Average time per call: 3.65387e-05 ms
+RTTM includes built-in support for serializing objects to JSON and deserializing JSON back to objects.
 
-.\RTTMTest.exe
-Final result: 1000000000
-[RTTM] Execution time for 1000000000 calls: 19256.9 ms
-[RTTM] Average time per call: 1.92569e-05 ms
+#### RTTM Serialization Example
+
+```cpp
+#include <chrono>
+#include <iostream>
+#include "RTTM/RTTM.hpp"
+#include <nlohmann/json.hpp>
+#include <string>
+
+using json = nlohmann::json;
+using namespace RTTM;
+
+class TestClass {
+public:
+    float C;
+};
+
+class JsonSerializable {
+public:
+    int A;
+    std::string B;
+    TestClass D;
+};
+
+RTTM_REGISTRATION {
+    Registry_<TestClass>().property("C", &TestClass::C);
+    Registry_<JsonSerializable>()
+        .property("A", &JsonSerializable::A)
+        .property("B", &JsonSerializable::B)
+        .property("D", &JsonSerializable::D);
+}
+
+json Serialize(const RType& type) {
+    json j;
+    for (const auto& name : type.GetPropertyNames()) {
+        auto prop = type.GetProperty(name);
+        if (prop->Is<int>()) {
+            j[name] = prop->As<int>();
+        } else if (prop->Is<std::string>()) {
+            j[name] = prop->As<std::string>();
+        } else if (prop->Is<float>()) {
+            j[name] = prop->As<float>();
+        } else if (prop->Is<double>()) {
+            j[name] = prop->As<double>();
+        } else if (prop->Is<long>()) {
+            j[name] = prop->As<long>();
+        } else if (prop->Is<unsigned long>()) {
+            j[name] = prop->As<unsigned long>();
+        } else if (prop->Is<long long>()) {
+            j[name] = prop->As<long long>();
+        } else if (prop->Is<unsigned long long>()) {
+            j[name] = prop->As<unsigned long long>();
+        } else if (prop->Is<short>()) {
+            j[name] = prop->As<short>();
+        } else if (prop->Is<unsigned short>()) {
+            j[name] = prop->As<unsigned short>();
+        } else if (prop->Is<bool>()) {
+            j[name] = prop->As<bool>();
+        } else if (prop->Is<size_t>()) {
+            j[name] = prop->As<size_t>();
+        } else if (prop->IsClass()) {
+            j[name] = Serialize(*prop);
+        }
+    }
+    return j;
+}
+
+void Deserialize(const RType& tp, const json& js) {
+    for (auto& name : tp.GetPropertyNames()) {
+        auto prop = tp.GetProperty(name);
+        if (js.find(name) == js.end())
+            continue;
+        auto value = js[name];
+        if (prop->Is<int>())
+            prop->SetValue(value.get<int>());
+        else if (prop->Is<std::string>())
+            prop->SetValue(value.get<std::string>());
+        else if (prop->Is<float>())
+            prop->SetValue(value.get<float>());
+        else if (prop->Is<double>())
+            prop->SetValue(value.get<double>());
+        else if (prop->Is<long>())
+            prop->SetValue(value.get<long>());
+        else if (prop->Is<unsigned long>())
+            prop->SetValue(value.get<unsigned long>());
+        else if (prop->Is<long long>())
+            prop->SetValue(value.get<long long>());
+        else if (prop->Is<unsigned long long>())
+            prop->SetValue(value.get<unsigned long long>());
+        else if (prop->Is<short>())
+            prop->SetValue(value.get<short>());
+        else if (prop->Is<unsigned short>())
+            prop->SetValue(value.get<unsigned short>());
+        else if (prop->Is<bool>())
+            prop->SetValue(value.get<bool>());
+        else if (prop->Is<size_t>())
+            prop->SetValue(value.get<size_t>());
+        else if (prop->IsClass())
+            Deserialize(*prop, value);
+    }
+}
+
+int main(int argc, char** argv) {
+    try {
+        int iterations = std::stoi(argv[1]);
+        auto jst = RType::Get("JsonSerializable");
+        jst.Create();
+        auto& inst = jst.As<JsonSerializable>();
+
+        inst.A = 1;
+        inst.B = "Hello RTTM";
+        inst.D.C = 10000.f;
+
+        std::cout << "Serializing " << iterations << " times..." << std::endl;
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < iterations; i++) {
+            (void)Serialize(jst);
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        std::cout << Serialize(jst).dump() << std::endl;
+        double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "[RTTM] Serializing " << iterations << " times took: "
+                  << elapsed_ms << " ms\n";
+        std::cout << "[RTTM] Average per serialization: "
+                  << (elapsed_ms / iterations) << " ms\n\n";
+
+        auto js = Serialize(jst);
+        std::cout << "Deserializing " << iterations << " times..." << std::endl;
+        start = std::chrono::high_resolution_clock::now();
+        auto nt = RType::Get("JsonSerializable");
+        nt.Create();
+        for (int i = 0; i < iterations; i++) {
+            Deserialize(nt, js);
+        }
+        end = std::chrono::high_resolution_clock::now();
+        elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "[RTTM] Deserializing " << iterations << " times took: "
+                  << elapsed_ms << " ms\n";
+        std::cout << "[RTTM] Average per deserialization: "
+                  << (elapsed_ms / iterations) << " ms\n\n";
+
+        auto res = RType::Get("JsonSerializable");
+        res.Create();
+        Deserialize(res, js);
+        std::cout << res.As<JsonSerializable>().A << std::endl;
+        std::cout << res.As<JsonSerializable>().B << std::endl;
+        std::cout << res.As<JsonSerializable>().D.C << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+    }
+    return 0;
+}
 ```
 
-## Build Requirements
+### 4. Build Requirements and Guidelines
 
-- Requires C++17 or later.
+- Requires C++17.
 - Compatible with MSVC, GCC, and Clang.
-- No external dependencies; built solely on the C++ standard library.
+- No external dependencies – only the standard library is used.
 
-## Building and Usage
+#### Build Steps
 
-1. Include the RTTM (Runtime Turbo Mirror) source in your project.
+1. Include the RTTM source into your project.
+2. Enable C++17 in your compiler:
+   - For GCC and Clang: add `-std=c++17`
+   - For MSVC: add `/std:c++17`
+3. Refer to the examples above to learn how to register types, variables, and methods, and to perform dynamic operations via reflection.
 
-2. Configure your compiler to enable C++17 support, for example:
-   - For GCC and Clang: `-std=c++17`
-   - For MSVC: `/std:c++17`
+### 5. License
 
-3. Refer to the example code above to learn how to register types, variables, and functions, and to perform dynamic reflection operations.
+This project is licensed under the MIT License. Please refer to the LICENSE file for more details.
 
-## License
+### 6. Contribution
 
-This project is licensed under the MIT License.
+Contributions and feedback are welcome! To contribute:
+1. Fork the project.
+2. Create a branch and commit your changes.
+3. Submit a pull request, and we will review and merge it.
 
-## Contributing
+---
 
-Contributions and feedback are welcome!
+RTTM is dedicated to providing developers with a simple, fast, and extensible reflection solution for game engines and other high-performance applications. Thank you for your interest and support!

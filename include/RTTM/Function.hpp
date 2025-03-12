@@ -11,10 +11,12 @@ namespace RTTM
 }
 
 namespace RTTM
+
 {
     class IFunctionWrapper
     {
     public:
+        std::string argumentTypes;
         virtual ~IFunctionWrapper();
     };
 
@@ -34,11 +36,13 @@ namespace RTTM
     template <typename R, typename... Args>
     FunctionWrapper<R, Args...>::FunctionWrapper(std::function<R(Args...)> f): func(std::move(f))
     {
+        argumentTypes = Object::GetTypeName<Args...>();
     }
 
     template <typename R, typename... Args>
     FunctionWrapper<R, Args...>::FunctionWrapper(R (*f)(Args...)): func(f)
     {
+        argumentTypes = Object::GetTypeName<Args...>();
     }
 
     template <typename R, typename... Args>

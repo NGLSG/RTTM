@@ -89,7 +89,7 @@ namespace RTTM
         template <typename... Args>
         Ref<char> Create(Args... args)
         {
-            return (*std::dynamic_pointer_cast<FunctionWrapper<Ref<char>, Args...>>(createFunc))(
+            return (*std::static_pointer_cast<FunctionWrapper<Ref<char>, Args...>>(createFunc))(
                 std::forward<Args>(args)...);
         }
     };
@@ -275,6 +275,36 @@ namespace RTTM
             template <std::size_t N>
             using arg_type = std::tuple_element_t<N, arguments>;
         };
+
+        template <typename T>
+        struct ReplaceStringTypes
+        {
+            using type = T;
+        };
+
+        template <>
+        struct ReplaceStringTypes<std::string>
+        {
+            using type = const char*;
+        };
+
+        template <>
+        struct ReplaceStringTypes<std::wstring>
+        {
+            using type = const wchar_t*;
+        };
+
+        // Helper for transforming the parameter pack
+        template <typename T, typename... Args>
+        struct TransformedFactory
+        {
+            using FactoryType = Factory<T, typename ReplaceStringTypes<Args>::type...>;
+
+            static auto Create()
+            {
+                return FactoryType::CreateFactory();
+            }
+        };
     }
 
     //TODO 重构RTTM使其不再依附于Serializable,提高性能
@@ -363,8 +393,37 @@ namespace RTTM
         template <typename... Args>
         Registry_& constructor()
         {
-            detail::TypesInfo[typeName].factories[Object::GetTypeName<Args...>()] =
+            std::string name = Object::GetTypeName<Args...>();
+            detail::TypesInfo[typeName].factories[name] =
                 Factory<T, Args...>::CreateFactory();
+            static const std::string cc_strType = Object::GetTypeName<const char*>();
+            static const std::string strType = Object::GetTypeName<std::string>();
+            static const std::string cwc_strType = Object::GetTypeName<const wchar_t*>();
+            static const std::string wstrType = Object::GetTypeName<std::wstring>();
+            static auto replaceString = [](const std::string& src, const std::string& from, const std::string& to)
+            {
+                std::string result = src;
+                size_t start_pos = 0;
+                while ((start_pos = result.find(from, start_pos)) != std::string::npos)
+                {
+                    result.replace(start_pos, from.length(), to);
+                    start_pos += to.length();
+                }
+                return result;
+            };
+            if (name.find(strType) != std::string::npos)
+            {
+                name = replaceString(name, strType, cc_strType);
+                detail::TypesInfo[typeName].factories[name] = detail::TransformedFactory<T, Args...>::Create();
+            }
+
+            if (name.find(wstrType) != std::string::npos)
+            {
+                name = replaceString(name, wstrType, cwc_strType);
+                detail::TypesInfo[typeName].factories[name] = detail::TransformedFactory<T, Args...>::Create();
+            }
+
+
             return *this;
         }
 
@@ -496,7 +555,7 @@ namespace RTTM
             {
                 if (!instance)
                     throw std::runtime_error("Instance is null for member function: " + name);
-                auto wrapper = std::dynamic_pointer_cast<FunctionWrapper<T, void*, Args...>>(func);
+                auto wrapper = std::static_pointer_cast<FunctionWrapper<T, void*, Args...>>(func);
                 if (!wrapper)
                     throw std::runtime_error(
                         "Function signature mismatch for: " + name + " Arguments are: " + Object::GetTypeName<Args
@@ -505,10 +564,10 @@ namespace RTTM
             }
             else
             {
-                auto wrapper = std::dynamic_pointer_cast<FunctionWrapper<T, Args...>>(func);
+                auto wrapper = std::static_pointer_cast<FunctionWrapper<T, Args...>>(func);
                 if (!wrapper)
                     throw std::runtime_error(
-                        "Function signature mismatch for: " + name + "Arguments are: " + Object::GetTypeName<Args
+                        "Function signature mismatch for: " + name + " Arguments are: " + Object::GetTypeName<Args
                             ...>());
                 return (*wrapper)(std::forward<Args>(args)...);
             }
@@ -597,7 +656,7 @@ namespace RTTM
                 throw std::runtime_error("Function not found: " + name);
             }
 
-            auto _f = std::dynamic_pointer_cast<FunctionWrapper<T, void*, Args...>>(it->second);
+            auto _f = std::static_pointer_cast<FunctionWrapper<T, void*, Args...>>(it->second);
             if (!_f)
             {
                 throw std::runtime_error(
@@ -769,7 +828,7 @@ namespace RTTM
                 throw std::runtime_error("RTTM: Function not found: " + tn);
             }
 
-            auto funcPtr = std::dynamic_pointer_cast<FunctionWrapper<R, void*, Args...>>(it->second);
+            auto funcPtr = std::static_pointer_cast<FunctionWrapper<R, void*, Args...>>(it->second);
             if (!funcPtr)
             {
                 throw std::runtime_error("RTTM: Function not found or invalid cast: " + tn);
@@ -942,11 +1001,11 @@ namespace RTTM
         }
 
         // 静态获取类型方法
-        static RType Get(const std::string& typeName)
+        static Ref<RType> Get(const std::string& typeName)
         {
             if (detail::TypesInfo.find(typeName) == detail::TypesInfo.end())
             {
-                RType newStruct(typeName);
+                Ref<RType> newStruct = CreateRef<RType>(typeName);
                 throw std::runtime_error("RTTM: The structure has not been registered: " + typeName);
                 return newStruct;
             }
@@ -960,12 +1019,13 @@ namespace RTTM
             {
                 funcsName.insert(name);
             }
-            RType newStruct(typeName, detail::TypesInfo[typeName].type, membersName, funcsName, nullptr);
+            Ref<RType> newStruct = CreateRef<RType>(typeName, detail::TypesInfo[typeName].type, membersName, funcsName,
+                                                    nullptr);
             return newStruct;
         }
 
         template <typename T>
-        static RType Get()
+        static Ref<RType> Get()
         {
             return Get(Object::GetTypeName<T>());
         }
@@ -991,10 +1051,12 @@ namespace RTTM
                 throw std::runtime_error("RTTM: The function has not been registered: " + name);
             }
 
-            auto _f = std::dynamic_pointer_cast<FunctionWrapper<T, Args...>>(detail::GFunctions[name]);
+            auto _f = std::static_pointer_cast<FunctionWrapper<T, Args...>>(detail::GFunctions[name]);
             if (!_f)
             {
-                throw std::runtime_error("RTTM: Function signature mismatch for: " + name);
+                throw std::runtime_error(
+                    "RTTM: Function signature mismatch for: " + name + " Arguments are: " + Object::GetTypeName<Args
+                        ...>() + " Require type are: " + detail::GFunctions[name]->argumentTypes);
             }
             return Method<T>(_f, name, nullptr, false);
         }
@@ -1047,13 +1109,7 @@ namespace RTTM
         template <typename T, typename... Args>
         static T InvokeG(const std::string& name, Args... args)
         {
-            if (detail::GFunctions.find(name) == detail::GFunctions.end())
-            {
-                std::cerr << "RTTM: The function has not been registered: " << name << std::endl;
-                return T();
-            }
-            return (*std::dynamic_pointer_cast<FunctionWrapper<T, Args...>>(detail::GFunctions[name]))(
-                std::forward<Args>(args)...);
+            return GetMethodOrig<T, Args...>(name).Invoke(std::forward<Args>(args)...);
         }
 
         template <typename FuncType>

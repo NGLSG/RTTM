@@ -18,30 +18,7 @@ namespace RTTM
     class Serializable;
     class IEnum;
     //inline static std::unordered_set<std::shared_ptr<Serializable>> Instances; //仅用作防止指针突然崩溃
-    template <typename T>
-    using Ref = std::shared_ptr<T>;
 
-    template <typename T, typename... Args>
-    Ref<T> CreateRef(Args&&... args)
-    {
-        return std::make_shared<T>(std::forward<Args>(args)...);
-    }
-
-    template <typename T>
-    Ref<T> CreateRef2(T* ptr)
-    {
-        return Ref<T>(ptr, [](T* ptr)
-        {
-            std::cout << "delete: " << ptr << std::endl;
-            delete ptr;
-        });
-    }
-
-    template <typename T>
-    Ref<T> AliasCreate(Ref<T> manager, T* ptr)
-    {
-        return std::shared_ptr<T>(manager, ptr);
-    }
 
     class Type
     {
