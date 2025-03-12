@@ -1,4 +1,3 @@
-```markdown
 <div align="center">
   <img src="imgs/logo.svg" alt="Logo" />
 </div>
