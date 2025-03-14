@@ -15,7 +15,7 @@ if (ANDROID)
     set(ANDROID_LIBS log android)
 endif ()
 
-add_library(RTTM_shared SHARED ${SRC_FILES} ${HEAD_FILES})
+#[[add_library(RTTM_shared SHARED ${SRC_FILES} ${HEAD_FILES})
 target_link_libraries(RTTM_shared PUBLIC
         ${ANDROID_LIBS}
 )
@@ -24,6 +24,8 @@ set_target_properties(RTTM_shared PROPERTIES
         OUTPUT_NAME "RTTM_shared"
         LIBRARY_OUTPUT_DIRECTORY ${SHARED_OUTPUT_DIR}
 )
+target_compile_definitions(RTTM_shared PRIVATE "RTTM_BUILD_SHARED")
+target_include_directories(RTTM_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)]]
 
 # 创建静态库目标
 add_library(RTTM_static STATIC ${SRC_FILES} ${HEAD_FILES})
@@ -35,11 +37,12 @@ set_target_properties(RTTM_static PROPERTIES
         OUTPUT_NAME "RTTM_static"
         ARCHIVE_OUTPUT_DIRECTORY ${STATIC_OUTPUT_DIR}
 )
+target_compile_definitions(RTTM_static PRIVATE "RTTM_STATIC")
 
-target_include_directories(RTTM_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 target_include_directories(RTTM_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-install(TARGETS RTTM_shared RTTM_static
+install(TARGETS RTTM_static
         RUNTIME DESTINATION ${CMAKE_BINARY_DIR}
         LIBRARY DESTINATION ${CMAKE_BINARY_DIR}
         ARCHIVE DESTINATION ${CMAKE_BINARY_DIR})
@@ -47,7 +50,7 @@ install(TARGETS RTTM_shared RTTM_static
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/RTTM DESTINATION ${CMAKE_BINARY_DIR}/include)
 
 add_library(RTTM::RTTM ALIAS RTTM_static)
-add_custom_target(build_all ALL DEPENDS RTTM_shared RTTM_static)
+add_custom_target(build_all ALL DEPENDS RTTM_static)
 
 # Add an install target that depends on build_all
 add_custom_target(install_all
