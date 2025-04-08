@@ -18,18 +18,18 @@
 namespace RTTM
 {
     template <typename T>
-    using Ref = std::shared_ptr<T>;
+    using _Ref_ = std::shared_ptr<T>;
 
     template <typename T, typename... Args>
-    Ref<T> CreateRef(Args&&... args)
+    _Ref_<T> Create_Ref_(Args&&... args)
     {
         return std::make_shared<T>(std::forward<Args>(args)...);
     }
 
     template <typename T>
-    Ref<T> CreateRef2(T* ptr)
+    _Ref_<T> Create_Ref_2(T* ptr)
     {
-        return Ref<T>(ptr, [](T* ptr)
+        return _Ref_<T>(ptr, [](T* ptr)
         {
             std::cout << "delete: " << ptr << std::endl;
             delete ptr;
@@ -37,7 +37,7 @@ namespace RTTM
     }
 
     template <typename T>
-    Ref<T> AliasCreate(Ref<T> manager, T* ptr)
+    _Ref_<T> AliasCreate(_Ref_<T> manager, T* ptr)
     {
         return std::shared_ptr<T>(manager, ptr);
     }
