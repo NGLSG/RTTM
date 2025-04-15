@@ -193,22 +193,22 @@ namespace RTTM
             }
 
             return _Ref_<char>(reinterpret_cast<char*>(rawPtr),
-                             [allocCopy = this->allocator](char* ptr)
-                             {
-                                 T* typedPtr = reinterpret_cast<T*>(ptr);
-                                 Traits::destroy(*allocCopy, typedPtr);
+                               [allocCopy = this->allocator](char* ptr)
+                               {
+                                   T* typedPtr = reinterpret_cast<T*>(ptr);
+                                   Traits::destroy(*allocCopy, typedPtr);
 
-                                 if constexpr (sizeof(T) <= BLOCK_SIZE && std::is_trivially_destructible_v<T>)
-                                 {
-                                     if (memoryPool.size() < 64)
-                                     {
-                                         memoryPool.push_back(typedPtr);
-                                         return;
-                                     }
-                                 }
+                                   if constexpr (sizeof(T) <= BLOCK_SIZE && std::is_trivially_destructible_v<T>)
+                                   {
+                                       if (memoryPool.size() < 64)
+                                       {
+                                           memoryPool.push_back(typedPtr);
+                                           return;
+                                       }
+                                   }
 
-                                 Traits::deallocate(*allocCopy, typedPtr, 1);
-                             }
+                                   Traits::deallocate(*allocCopy, typedPtr, 1);
+                               }
             );
         }
     };
@@ -226,7 +226,8 @@ namespace RTTM
         };
 
         using ValueMap = std::unordered_map<std::string, _Ref_<void>, std::hash<std::string>, std::equal_to<>>; //变量
-        using FunctionMap = std::unordered_map<std::string, _Ref_<IFunctionWrapper>, std::hash<std::string>, std::equal_to
+        using FunctionMap = std::unordered_map<std::string, _Ref_<IFunctionWrapper>, std::hash<std::string>,
+                                               std::equal_to
                                                <>>; //函数
         using MemberMap = std::unordered_map<std::string, Member, std::hash<std::string>, std::equal_to<>>; //类的成员的偏移量
         using EnumMap = std::unordered_map<std::string, int, std::hash<std::string>, std::equal_to<>>; //枚举的值
@@ -410,8 +411,6 @@ namespace RTTM
             }
         };
 
-        class RType;
-
         struct StringPatternCache
         {
             static std::string ReplacePattern(const std::string& src,
@@ -488,7 +487,7 @@ namespace RTTM
         {
             if (detail::RegisteredTypes.count(typeName) > 0)
             {
-                std::cout << "RTTM: The structure has been registered: " << typeName << std::endl;
+                std::cerr << "RTTM: The structure has been registered: " << typeName << std::endl;
                 return;
             }
 
@@ -733,10 +732,6 @@ namespace RTTM
                 sizeof...(Args) > 0)
             {
                 auto hash = hashArgs(args...);
-                if (lastCall.valid && lastCall.argsHash == hash)
-                {
-                    return lastCall.result;
-                }
 
                 if (isMemberFunction)
                 {
@@ -822,63 +817,23 @@ namespace RTTM
         }
     };
 
-    class RTypeData
-    {
-    public:
-        std::string type;
-        RTTMTypeBits typeEnum;
-        std::type_index typeIndex;
-        std::unordered_set<std::string> membersName;
-        std::unordered_set<std::string> funcsName;
-
-        RTypeData(const std::string& typeName, RTTMTypeBits typeE, const std::type_index& typeIdx,
-                  std::unordered_set<std::string>&& members, std::unordered_set<std::string>&& funcs)
-            : type(typeName), typeEnum(typeE), typeIndex(typeIdx),
-              membersName(std::move(members)), funcsName(std::move(funcs))
-        {
-            if (detail::TypesInfo.find(type) == detail::TypesInfo.end())
-            {
-                throw std::runtime_error("RTTM: Type not registered: " + type);
-            }
-            auto& typeInfo = detail::TypesInfo[type];
-
-            for (const auto& [name, _] : typeInfo.members)
-            {
-                membersName.insert(name);
-            }
-
-            for (const auto& [name, _] : typeInfo.functions)
-            {
-                size_t paramStart = name.find('(');
-                if (paramStart != std::string::npos)
-                {
-                    funcsName.insert(name.substr(0, paramStart));
-                }
-                else
-                {
-                    funcsName.insert(name);
-                }
-            }
-        }
-
-        RTypeData() = default;
-    };
-
     class RType
     {
     private:
-        inline static std::unordered_map<std::string, std::shared_ptr<const RTypeData>> dataCache;
+        // 有效性检查的缓存
         mutable bool lastValidityCheck = false;
         mutable bool validityCacheValid = false;
 
+        // 检查对象是否有效，并缓存结果
         template <typename R = bool>
         R checkValid() const
         {
+            // 如果缓存有效，直接返回缓存的结果
             if (validityCacheValid)
             {
                 if (!lastValidityCheck)
                 {
-                    throw std::runtime_error("RTTM: Invalid object state");
+                    throw std::runtime_error("RTTM: 对象状态无效");
                 }
                 return R(lastValidityCheck);
             }
@@ -887,18 +842,19 @@ namespace RTTM
             if (!isValid)
             {
                 if (!valid)
-                    throw std::runtime_error("RTTM: The structure has not been registered");
+                    throw std::runtime_error("RTTM: 结构未注册");
                 if (!created)
-                    throw std::runtime_error("RTTM: The object has not been created");
+                    throw std::runtime_error("RTTM: 对象未创建");
             }
 
-            // Cache the result
+            // 缓存检查结果
             lastValidityCheck = isValid;
             validityCacheValid = true;
 
             return R(isValid);
         }
 
+        // 从新实例复制数据
         void _copyFrom(const _Ref_<char>& newInst) const
         {
             if (!checkValid()) return;
@@ -909,10 +865,11 @@ namespace RTTM
             }
             else
             {
-                throw std::runtime_error("RTTM: Copy constructor not registered for: " + type);
+                throw std::runtime_error("RTTM: 类型未注册复制构造函数: " + type);
             }
         }
 
+        // 获取方法实现的泛型函数
         template <typename FuncType>
         auto GetMethodImpl(const std::string& name) const
         {
@@ -925,9 +882,11 @@ namespace RTTM
             }, typename traits::arguments{});
         }
 
+        // 获取原始方法对象
         template <typename T, typename... Args>
         Method<T> GetMethodOrig(const std::string& name) const
         {
+            // 使用线程局部存储优化签名缓存
             static thread_local std::unordered_map<std::string, std::string> signatureCache;
 
             std::string tn;
@@ -939,7 +898,18 @@ namespace RTTM
             }
             else
             {
-                tn = name + Object::GetTypeName<Args...>();
+                // 预分配字符串空间减少内存分配
+                std::string temp;
+                temp.reserve(name.size() + 32); // 预留足够空间
+                temp = name + Object::GetTypeName<Args...>();
+                tn = std::move(temp);
+
+                // 控制缓存大小
+                if (signatureCache.size() > 1000)
+                {
+                    signatureCache.clear();
+                    signatureCache.reserve(500); // 预分配空间
+                }
                 signatureCache[cacheKey] = tn;
             }
 
@@ -953,33 +923,37 @@ namespace RTTM
 
             if (!funcWrapper)
             {
-                throw std::runtime_error("Function not found: " + name);
+                throw std::runtime_error("未找到函数: " + name);
             }
 
             auto _f = std::static_pointer_cast<FunctionWrapper<T, void*, Args...>>(funcWrapper);
             if (!_f)
             {
                 throw std::runtime_error(
-                    "Function signature mismatch for: " + name + " Arguments are: " + Object::GetTypeName<Args...>());
+                    "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<Args...>());
             }
 
             return Method<T>(_f, name, static_cast<void*>(instance.get()), true);
         }
 
+        // 预加载所有属性
         void preloadAllProperties() const
         {
             if (!checkValid() || propertiesPreloaded) return;
 
             auto& typeInfo = detail::TypesInfo[type];
+            // 预先分配缓存大小，避免频繁扩容
+            membersCache.reserve(typeInfo.members.size());
+
             for (const auto& [name, memberInfo] : typeInfo.members)
             {
-                // If already in cache, skip
+                // 已经缓存的属性跳过
                 if (membersCache.find(name) != membersCache.end()) continue;
 
                 auto typeIt = typeInfo.membersType.find(name);
                 if (typeIt == typeInfo.membersType.end()) continue;
 
-                auto newStruct = Create(typeIt->second);
+                auto newStruct = Create(typeIt->second, memberInfo.type, memberInfo.typeIndex);
                 newStruct->instance = AliasCreate(instance, instance.get() + memberInfo.offset);
                 newStruct->valid = true;
                 newStruct->created = true;
@@ -990,57 +964,178 @@ namespace RTTM
         }
 
     protected:
-        std::string type;
-        std::shared_ptr<const RTypeData> typeData;
-        mutable _Ref_<char> instance;
-        mutable bool valid = false;
-        mutable bool created = false;
+        std::string type; // 类型名称
+        RTTMTypeBits typeEnum; // 类型枚举
+        std::type_index typeIndex = std::type_index(typeid(void)); // 类型索引
+        mutable _Ref_<char> instance; // 实例指针
+        mutable bool valid = false; // 类型是否有效
+        mutable bool created = false; // 对象是否已创建
 
-        mutable std::unordered_map<std::string, _Ref_<RType>> membersCache;
+        mutable std::unordered_set<std::string> membersName; // 成员名称集合
+        mutable std::unordered_set<std::string> funcsName; // 函数名称集合
+        mutable std::unordered_map<std::string, _Ref_<RType>> membersCache; // 成员缓存
 
-        mutable bool propertiesPreloaded = false;
+        mutable bool propertiesPreloaded = false; // 属性是否已预加载
 
+        // 属性查找缓存
         struct PropertyLookupCache
         {
-            std::string lastPropertyName;
-            size_t offset = 0;
-            bool valid = false;
+            std::string lastPropertyName; // 上次查找的属性名
+            size_t offset = 0; // 属性偏移量
+            bool valid = false; // 缓存是否有效
         };
 
-        mutable PropertyLookupCache propCache;
+        mutable PropertyLookupCache propCache; // 属性查找缓存实例
 
     public:
+        // 默认构造函数
         RType() = default;
 
-        RType(std::string _type) : type(std::move(_type)), typeData(), valid(!type.empty())
+        // 基于类型名的构造函数
+        RType(std::string _type) : type(std::move(_type)), valid(!_type.empty())
         {
             if (valid)
             {
-                if (dataCache.find(type) == dataCache.end())
+                if (detail::TypesInfo.find(type) == detail::TypesInfo.end())
                 {
                     valid = false;
-                    throw std::runtime_error("RTTM: Type not registered: " + type);
+                    throw std::runtime_error("RTTM: 类型未注册: " + type);
                     return;
                 }
-                typeData = dataCache[type];
+
+                auto& typeInfo = detail::TypesInfo[type];
+                typeEnum = typeInfo.type;
+                typeIndex = typeInfo.typeIndex;
+
+                // 预分配集合容量
+                membersName.reserve(typeInfo.members.size());
+                funcsName.reserve(typeInfo.functions.size());
+
+                for (const auto& [name, _] : typeInfo.members)
+                {
+                    membersName.insert(name);
+                }
+
+                for (const auto& [name, _] : typeInfo.functions)
+                {
+                    size_t paramStart = name.find('(');
+                    if (paramStart != std::string::npos)
+                    {
+                        funcsName.insert(name.substr(0, paramStart));
+                    }
+                    else
+                    {
+                        funcsName.insert(name);
+                    }
+                }
             }
         }
 
-        static _Ref_<RType> Create(const std::string& typeName)
+        // 详细构造函数
+        RType(const std::string& _type, RTTMTypeBits _typeEnum, const std::type_index& _typeIndex,
+              const std::unordered_set<std::string>& _membersName = {},
+              const std::unordered_set<std::string>& _funcsName = {},
+              const _Ref_<char>& _instance = nullptr):
+            type(_type),
+            typeEnum(_typeEnum),
+            typeIndex(_typeIndex),
+            instance(_instance),
+            valid(!_type.empty()),
+            created(_typeEnum == RTTMTypeBits::Variable || _instance != nullptr),
+            membersName(_membersName),
+            funcsName(_funcsName)
         {
-            return Create_Ref_<RType>(typeName);
+            if (!valid && !type.empty())
+            {
+                if (detail::RegisteredTypes.count(type) == 0)
+                {
+                    throw std::runtime_error("RTTM: 类型未注册: " + type);
+                    valid = false;
+                    return;
+                }
+            }
+
+            if (valid)
+            {
+                if (membersName.empty())
+                {
+                    auto& members = detail::TypesInfo[type].members;
+                    membersName.reserve(members.size()); // 预分配空间
+
+                    for (const auto& [name, _] : members)
+                    {
+                        membersName.insert(name);
+                    }
+                }
+
+                if (funcsName.empty())
+                {
+                    auto& functions = detail::TypesInfo[type].functions;
+                    funcsName.reserve(functions.size()); // 预分配空间
+
+                    for (const auto& [name, _] : functions)
+                    {
+                        size_t paramStart = name.find('(');
+                        if (paramStart != std::string::npos)
+                        {
+                            funcsName.insert(name.substr(0, paramStart));
+                        }
+                        else
+                        {
+                            funcsName.insert(name);
+                        }
+                    }
+                }
+            }
         }
 
+        // 创建RType对象，使用对象池提升性能
+        static _Ref_<RType> Create(const std::string& type, RTTMTypeBits typeEnum, const std::type_index& typeIndex,
+                                   const std::unordered_set<std::string>& membersName = {},
+                                   const std::unordered_set<std::string>& funcsName = {},
+                                   const _Ref_<char>& instance = nullptr)
+        {
+            // 使用线程局部对象池
+            static thread_local std::vector<_Ref_<RType>> typePool;
+            static constexpr size_t MAX_POOL_SIZE = 128; // 控制池大小上限
 
+            if (!typePool.empty())
+            {
+                auto rtype = typePool.back();
+                typePool.pop_back();
+
+                // 重置对象状态
+                rtype->type = type;
+                rtype->typeEnum = typeEnum;
+                rtype->typeIndex = typeIndex;
+                rtype->instance = instance;
+                rtype->valid = !type.empty();
+                rtype->created = (typeEnum == RTTMTypeBits::Variable || instance != nullptr);
+                rtype->membersName = membersName;
+                rtype->funcsName = funcsName;
+                rtype->membersCache.clear();
+                rtype->propertiesPreloaded = false;
+                rtype->validityCacheValid = false;
+                rtype->propCache.valid = false;
+
+                return rtype;
+            }
+
+            return Create_Ref_<RType>(type, typeEnum, typeIndex, membersName, funcsName, instance);
+        }
+
+        // 创建实例
         template <typename... Args>
         bool Create(Args... args) const
         {
             if (!valid)
             {
-                throw std::runtime_error("RTTM: Invalid type: " + type);
+                throw std::runtime_error("RTTM: 无效类型: " + type);
             }
 
+            // 使用线程局部工厂缓存
             static thread_local std::unordered_map<std::string, std::pair<std::string, _Ref_<IFactory>>> factoryCache;
+            static constexpr size_t MAX_CACHE_SIZE = 200; // 缓存大小上限
 
             std::string factoryKey = type + Object::GetTypeName<Args...>();
             _Ref_<IFactory> factory;
@@ -1058,26 +1153,39 @@ namespace RTTM
 
                 if (factoryMapIt == factories.end())
                 {
-                    throw std::runtime_error("RTTM: Factory not registered for: " + type + " with args " + _t);
+                    throw std::runtime_error("RTTM: 未注册工厂: " + type + " 参数: " + _t);
                 }
 
                 factory = factoryMapIt->second;
-                if (factoryCache.size() > 100)
+                if (factoryCache.size() > MAX_CACHE_SIZE)
                 {
-                    factoryCache.clear();
+                    // 智能缓存淘汰策略：保留一半缓存
+                    auto halfSize = MAX_CACHE_SIZE / 2;
+                    std::vector<std::string> keysToRemove;
+                    keysToRemove.reserve(factoryCache.size() - halfSize);
+
+                    size_t count = 0;
+                    for (const auto& entry : factoryCache)
+                    {
+                        if (count++ >= halfSize)
+                            keysToRemove.push_back(entry.first);
+                    }
+
+                    for (const auto& key : keysToRemove)
+                        factoryCache.erase(key);
                 }
                 factoryCache[factoryKey] = {_t, factory};
             }
 
             if (!factory)
             {
-                throw std::runtime_error("RTTM: Invalid factory for: " + type);
+                throw std::runtime_error("RTTM: 无效工厂: " + type);
             }
 
             auto newInst = factory->Create(std::forward<Args>(args)...);
             if (!newInst)
             {
-                throw std::runtime_error("RTTM: Failed to create instance of: " + type);
+                throw std::runtime_error("RTTM: 创建实例失败: " + type);
             }
 
             if (instance)
@@ -1099,14 +1207,15 @@ namespace RTTM
             return true;
         }
 
+        // 绑定到现有实例
         template <typename T>
         void Attach(T& inst) const
         {
 #ifndef NDEBUG
-            if (typeData->typeIndex != std::type_index(typeid(T)))
-            {
-                throw std::runtime_error("RTTM: Type mismatch in Attach");
-            }
+        if (typeIndex != std::type_index(typeid(T)))
+        {
+            throw std::runtime_error("RTTM: Attach中类型不匹配");
+        }
 #endif
 
             instance = AliasCreate(instance, static_cast<char*>(reinterpret_cast<void*>(&inst)));
@@ -1119,10 +1228,13 @@ namespace RTTM
             propCache.valid = false;
         }
 
+        // 调用方法
         template <typename R, typename... Args>
         R Invoke(const std::string& name, Args... args) const
         {
+            // 优化签名缓存
             static thread_local std::unordered_map<std::string, std::string> signatureCache;
+            static constexpr size_t MAX_SIG_CACHE_SIZE = 500;
 
             std::string cacheKey = name + "|" + type;
             std::string tn;
@@ -1133,7 +1245,28 @@ namespace RTTM
             }
             else
             {
-                tn = name + Object::GetTypeName<Args...>();
+                // 预分配内存减少重新分配
+                std::string temp;
+                temp.reserve(name.size() + 32);
+                temp = name + Object::GetTypeName<Args...>();
+                tn = std::move(temp);
+
+                if (signatureCache.size() > MAX_SIG_CACHE_SIZE)
+                {
+                    // 智能缓存管理：移除部分而非全部
+                    std::vector<std::string> keysToRemove;
+                    keysToRemove.reserve(signatureCache.size() / 2);
+
+                    size_t count = 0;
+                    for (const auto& entry : signatureCache)
+                    {
+                        if (count++ % 2 == 0) // 移除约一半
+                            keysToRemove.push_back(entry.first);
+                    }
+
+                    for (const auto& key : keysToRemove)
+                        signatureCache.erase(key);
+                }
                 signatureCache[cacheKey] = tn;
             }
 
@@ -1147,24 +1280,26 @@ namespace RTTM
 
             if (!funcWrapper)
             {
-                throw std::runtime_error("RTTM: Function not found: " + tn);
+                throw std::runtime_error("RTTM: 函数未找到: " + tn);
             }
 
             auto funcPtr = std::static_pointer_cast<FunctionWrapper<R, void*, Args...>>(funcWrapper);
             if (!funcPtr)
             {
-                throw std::runtime_error("RTTM: Invalid function signature for: " + tn);
+                throw std::runtime_error("RTTM: 函数签名无效: " + tn);
             }
 
             return funcPtr->operator()(static_cast<void*>(instance.get()), std::forward<Args>(args)...);
         }
 
+        // 获取方法
         template <typename FuncType>
         auto GetMethod(const std::string& name) const
         {
             return GetMethodImpl<FuncType>(name);
         }
 
+        // 获取属性值
         template <typename T>
         T& GetProperty(const std::string& name) const
         {
@@ -1176,6 +1311,7 @@ namespace RTTM
 
             size_t offset;
 
+            // 使用属性查找缓存
             if (propCache.valid && propCache.lastPropertyName == name)
             {
                 offset = propCache.offset;
@@ -1187,7 +1323,7 @@ namespace RTTM
                 if (it == members.end())
                 {
                     static T dummy{};
-                    throw std::runtime_error("RTTM: Member not found: " + name);
+                    throw std::runtime_error("RTTM: 成员未找到: " + name);
                     return dummy;
                 }
 
@@ -1201,13 +1337,15 @@ namespace RTTM
             return *reinterpret_cast<T*>(instance.get() + offset);
         }
 
+        // 获取对象属性
         _Ref_<RType> GetProperty(const std::string& name) const
         {
             if (!checkValid())
             {
-                throw std::runtime_error("RTTM: Invalid object access: " + type);
+                throw std::runtime_error("RTTM: 无效对象访问: " + type);
             }
 
+            // 检查属性缓存
             auto cacheIt = membersCache.find(name);
             if (cacheIt != membersCache.end())
             {
@@ -1218,17 +1356,17 @@ namespace RTTM
             auto it = members.find(name);
             if (it == members.end())
             {
-                throw std::runtime_error("RTTM: Member not found: " + name);
+                throw std::runtime_error("RTTM: 成员未找到: " + name);
             }
 
             auto& typeInfo = detail::TypesInfo[type];
             auto typeIt = typeInfo.membersType.find(name);
             if (typeIt == typeInfo.membersType.end())
             {
-                throw std::runtime_error("RTTM: Member type not found: " + name);
+                throw std::runtime_error("RTTM: 成员类型未找到: " + name);
             }
 
-            auto newStruct = Create(typeIt->second);
+            auto newStruct = Create(typeIt->second, it->second.type, it->second.typeIndex);
             newStruct->instance = AliasCreate(instance, instance.get() + it->second.offset);
             newStruct->valid = true;
             newStruct->created = true;
@@ -1237,6 +1375,7 @@ namespace RTTM
             return newStruct;
         }
 
+        // 获取所有属性
         std::unordered_map<std::string, _Ref_<RType>> GetProperties() const
         {
             if (!checkValid())
@@ -1252,6 +1391,7 @@ namespace RTTM
             return membersCache;
         }
 
+        // 设置值
         template <typename T>
         bool SetValue(const T& value) const
         {
@@ -1261,16 +1401,17 @@ namespace RTTM
             }
 
 #ifndef NDEBUG
-            if (typeData->typeIndex != std::type_index(typeid(T)) && !IsPrimitiveType())
-            {
-                throw std::runtime_error("RTTM: Type mismatch in SetValue");
-            }
+        if (typeIndex != std::type_index(typeid(T)) && !IsPrimitiveType())
+        {
+            throw std::runtime_error("RTTM: SetValue中类型不匹配");
+        }
 #endif
 
             *reinterpret_cast<T*>(instance.get()) = value;
             return true;
         }
 
+        // 调用析构函数
         void Destructor() const
         {
             if (valid && created && instance && detail::TypesInfo[type].destructor)
@@ -1282,10 +1423,12 @@ namespace RTTM
             }
         }
 
-        bool IsClass() const { return typeData->typeEnum == RTTMTypeBits::Class; }
-        bool IsEnum() const { return typeData->typeEnum == RTTMTypeBits::Enum; }
-        bool IsVariable() const { return typeData->typeEnum == RTTMTypeBits::Variable; }
+        // 类型判断函数
+        bool IsClass() const { return typeEnum == RTTMTypeBits::Class; }
+        bool IsEnum() const { return typeEnum == RTTMTypeBits::Enum; }
+        bool IsVariable() const { return typeEnum == RTTMTypeBits::Variable; }
 
+        // 检查对象是否有效
         bool IsValid() const
         {
             if (validityCacheValid)
@@ -1299,15 +1442,18 @@ namespace RTTM
             return isValid;
         }
 
+        // 类型检查
         template <typename T>
         bool Is() const
         {
             static const std::type_index cachedTypeIndex = std::type_index(typeid(T));
-            return typeData->typeIndex == cachedTypeIndex;
+            return typeIndex == cachedTypeIndex;
         }
 
+        // 检查是否为基本类型
         bool IsPrimitiveType() const
         {
+            // 基本类型集合
             static const std::unordered_set<std::string> primitiveTypes = {
                 "int", "float", "double", "long", "short", "char",
                 "unsigned int", "unsigned long", "unsigned short", "unsigned char",
@@ -1318,97 +1464,90 @@ namespace RTTM
             return primitiveTypes.count(type) > 0;
         }
 
+        // 获取属性名称集合
         const std::unordered_set<std::string>& GetPropertyNames() const
         {
-            return typeData->membersName;
+            return membersName;
         }
 
+        // 获取方法名称集合
         const std::unordered_set<std::string>& GetMethodNames() const
         {
-            return typeData->funcsName;
+            return funcsName;
         }
 
+        // 获取原始指针
         void* GetRaw() const
         {
             return valid && created ? instance.get() : nullptr;
         }
 
+        // 转换为指定类型引用
         template <typename T>
         T& As() const
         {
             if (!checkValid())
             {
-                throw std::runtime_error("RTTM: Invalid object access: " + type);
+                throw std::runtime_error("RTTM: 无效对象访问: " + type);
             }
 
 #ifndef NDEBUG
-            if (typeData->typeIndex != std::type_index(typeid(T)))
-            {
-                throw std::runtime_error("RTTM: Type mismatch in As<T>");
-            }
+        if (typeIndex != std::type_index(typeid(T)))
+        {
+            throw std::runtime_error("RTTM: As<T>中类型不匹配");
+        }
 #endif
 
             return *reinterpret_cast<T*>(instance.get());
         }
 
+        // 获取类型信息
         static _Ref_<RType> Get(const std::string& typeName)
         {
-            std::shared_ptr<const RTypeData> sharedData;
-            auto dataIt = dataCache.find(typeName);
-
-            if (dataIt != dataCache.end())
+            if (detail::RegisteredTypes.count(typeName) == 0)
             {
-                // 重用已缓存的类型数据
-                sharedData = dataIt->second;
+                _Ref_<RType> newStruct = Create_Ref_<RType>(typeName);
+                throw std::runtime_error("RTTM: 类型未注册: " + typeName);
+                return newStruct;
             }
-            else
+
+            std::unordered_set<std::string> membersName;
+            std::unordered_set<std::string> funcsName;
+
+            auto& typeInfo = detail::TypesInfo[typeName];
+            membersName.reserve(typeInfo.members.size());
+            funcsName.reserve(typeInfo.functions.size());
+
+            for (const auto& [name, _] : typeInfo.members)
             {
-                // 类型不存在，检查是否已注册
-                if (detail::RegisteredTypes.count(typeName) == 0)
-                    throw std::runtime_error("RTTM: Type not registered: " + typeName);
+                membersName.insert(name);
+            }
 
-                // 获取类型信息
-                const auto& typeInfo = detail::TypesInfo[typeName];
-
-                // 预先计算成员集合
-                std::unordered_set<std::string> membersName;
-                membersName.reserve(typeInfo.members.size());
-
-                for (const auto& [name, _] : typeInfo.members)
-                    membersName.insert(name);
-
-                // 预先计算函数集合
-                std::unordered_set<std::string> funcsName;
-                funcsName.reserve(typeInfo.functions.size());
-
-                for (const auto& [name, _] : typeInfo.functions)
+            for (const auto& [name, _] : typeInfo.functions)
+            {
+                size_t paramStart = name.find('(');
+                if (paramStart != std::string::npos)
                 {
-                    size_t paramStart = name.find('(');
-                    funcsName.insert(paramStart != std::string::npos ? name.substr(0, paramStart) : name);
+                    funcsName.insert(name.substr(0, paramStart));
                 }
-
-                // 创建并缓存共享数据
-                sharedData = std::make_shared<const RTypeData>(
-                    typeName,
-                    typeInfo.type,
-                    typeInfo.typeIndex,
-                    std::move(membersName),
-                    std::move(funcsName)
-                );
-
-                dataCache[typeName] = sharedData;
+                else
+                {
+                    funcsName.insert(name);
+                }
             }
 
-            return Create(typeName);
+            return Create_Ref_<RType>(typeName, typeInfo.type, typeInfo.typeIndex,
+                                      membersName, funcsName, nullptr);
         }
 
-
+        // 获取泛型类型信息
         template <typename T>
         static _Ref_<RType> Get()
         {
             return Get(CachedTypeName<T>());
         }
 
+        // 析构函数
         ~RType()
         {
             if (valid && created && !type.empty())
