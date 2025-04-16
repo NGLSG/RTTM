@@ -820,10 +820,6 @@ namespace RTTM
     class RType
     {
     private:
-        // 有效性检查的缓存
-        mutable bool lastValidityCheck = false;
-        mutable bool validityCacheValid = false;
-
         // 检查对象是否有效，并缓存结果
         template <typename R = bool>
         R checkValid() const
@@ -953,7 +949,7 @@ namespace RTTM
                 auto typeIt = typeInfo.membersType.find(name);
                 if (typeIt == typeInfo.membersType.end()) continue;
 
-                auto newStruct = Create(typeIt->second, memberInfo.type, memberInfo.typeIndex);
+                auto newStruct = CreateType(typeIt->second, memberInfo.type, memberInfo.typeIndex);
                 newStruct->instance = AliasCreate(instance, instance.get() + memberInfo.offset);
                 newStruct->valid = true;
                 newStruct->created = true;
@@ -962,6 +958,11 @@ namespace RTTM
 
             propertiesPreloaded = true;
         }
+
+    private:
+        // 有效性检查的缓存
+        mutable bool lastValidityCheck = false;
+        mutable bool validityCacheValid = false;
 
     protected:
         std::string type; // 类型名称
@@ -1089,14 +1090,31 @@ namespace RTTM
             }
         }
 
-        // 创建RType对象，使用对象池提升性能
-        static _Ref_<RType> Create(const std::string& type, RTTMTypeBits typeEnum, const std::type_index& typeIndex,
-                                   const std::unordered_set<std::string>& membersName = {},
-                                   const std::unordered_set<std::string>& funcsName = {},
-                                   const _Ref_<char>& instance = nullptr)
+        // 自定义拷贝构造函数
+        RType(const RType& rtype) noexcept:
+            type(rtype.type),
+            typeEnum(rtype.typeEnum),
+            typeIndex(rtype.typeIndex),
+            valid(rtype.valid),
+            lastValidityCheck(rtype.lastValidityCheck),
+            validityCacheValid(rtype.validityCacheValid),
+            propertiesPreloaded(rtype.propertiesPreloaded),
+            membersName(rtype.membersName),
+            funcsName(rtype.funcsName),
+            membersCache(rtype.membersCache),
+            propCache(rtype.propCache),
+            instance(nullptr),
+            created(false)
+        {
+        }
+
+        static _Ref_<RType> CreateType(const std::string& type, RTTMTypeBits typeEnum, const std::type_index& typeIndex,
+                                       const std::unordered_set<std::string>& membersName = {},
+                                       const std::unordered_set<std::string>& funcsName = {},
+                                       const _Ref_<char>& instance = nullptr)
         {
             // 使用线程局部对象池
-            static thread_local std::vector<_Ref_<RType>> typePool;
+            static std::vector<_Ref_<RType>> typePool;
             static constexpr size_t MAX_POOL_SIZE = 128; // 控制池大小上限
 
             if (!typePool.empty())
@@ -1366,7 +1384,7 @@ namespace RTTM
                 throw std::runtime_error("RTTM: 成员类型未找到: " + name);
             }
 
-            auto newStruct = Create(typeIt->second, it->second.type, it->second.typeIndex);
+            auto newStruct = CreateType(typeIt->second, it->second.type, it->second.typeIndex);
             newStruct->instance = AliasCreate(instance, instance.get() + it->second.offset);
             newStruct->valid = true;
             newStruct->created = true;
@@ -1501,43 +1519,64 @@ namespace RTTM
             return *reinterpret_cast<T*>(instance.get());
         }
 
-        // 获取类型信息
         static _Ref_<RType> Get(const std::string& typeName)
         {
+            static std::unordered_map<std::string_view, RType> s_TypeCache;
+            static std::mutex cacheMutex;
+
             if (detail::RegisteredTypes.count(typeName) == 0)
             {
-                _Ref_<RType> newStruct = Create_Ref_<RType>(typeName);
                 throw std::runtime_error("RTTM: 类型未注册: " + typeName);
-                return newStruct;
             }
 
-            std::unordered_set<std::string> membersName;
-            std::unordered_set<std::string> funcsName;
+            std::string_view typeNameView(typeName.data(), typeName.size());
 
-            auto& typeInfo = detail::TypesInfo[typeName];
-            membersName.reserve(typeInfo.members.size());
-            funcsName.reserve(typeInfo.functions.size());
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = s_TypeCache.find(typeNameView);
 
-            for (const auto& [name, _] : typeInfo.members)
+            if (it == s_TypeCache.end())
             {
-                membersName.insert(name);
+                const auto& typeInfo = detail::TypesInfo[typeName];
+                const size_t membersSize = typeInfo.members.size();
+                const size_t functionsSize = typeInfo.functions.size();
+
+                std::unordered_set<std::string> membersName;
+                std::unordered_set<std::string> funcsName;
+                membersName.reserve(membersSize);
+                funcsName.reserve(functionsSize);
+
+                for (const auto& [name, _] : typeInfo.members)
+                {
+                    membersName.emplace(name);
+                }
+
+                for (const auto& [name, _] : typeInfo.functions)
+                {
+                    size_t paramStart = name.find('(');
+                    if (paramStart != std::string::npos)
+                    {
+                        funcsName.emplace(name.substr(0, paramStart));
+                    }
+                    else
+                    {
+                        funcsName.emplace(name);
+                    }
+                }
+
+                RType newStruct(
+                    typeName,
+                    typeInfo.type,
+                    typeInfo.typeIndex,
+                    membersName,
+                    funcsName,
+                    nullptr
+                );
+
+                s_TypeCache.emplace(typeNameView, std::move(newStruct));
             }
 
-            for (const auto& [name, _] : typeInfo.functions)
-            {
-                size_t paramStart = name.find('(');
-                if (paramStart != std::string::npos)
-                {
-                    funcsName.insert(name.substr(0, paramStart));
-                }
-                else
-                {
-                    funcsName.insert(name);
-                }
-            }
-
-            return Create_Ref_<RType>(typeName, typeInfo.type, typeInfo.typeIndex,
-                                      membersName, funcsName, nullptr);
+            const RType& cachedType = s_TypeCache[typeNameView];
+            return std::make_shared<RType>(cachedType);
         }
 
         // 获取泛型类型信息
