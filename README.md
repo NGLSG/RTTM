@@ -22,6 +22,7 @@ RTTM是一个基于C++17标准的高性能动态反射库，无外部依赖，�
 - **高性能设计** - 经基准测试，在反射调用方面显著优于主流库
 - **友好API** - 直观的API设计，支持流畅的链式调用
 - **内存效率** - 优化的内存占用，比竞品库少50%
+- **支持自动注册** - 编译期自动生成反射代码，简化注册流程
 
 ## 🚀 性能优势
 
@@ -217,6 +218,14 @@ int main() {
               << player.transform().position.z << std::endl;
     return 0;
 }
+```
+
+## 🔄 自动化注册
+```cmake
+add_executable(Test main.cpp header.h)
+target_link_libraries(Test PRIVATE RTTM)
+include(<PATH_TO_RTTM>/RTTM/cmake/reflection.cmake)
+rttm_add_reflection(Test)
 ```
 
 ## 🔄 序列化示例

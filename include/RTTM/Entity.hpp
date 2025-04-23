@@ -14,14 +14,14 @@
 
 namespace RTTM
 {
-    struct UID
+    struct UUID
     {
     public:
-        UID() : data({0})
+        UUID() : data({0})
         {
         }
 
-        static UID New();
+        static UUID New();
 
         std::string toString() const;
 
@@ -36,14 +36,14 @@ namespace RTTM
         }
 
 
-        bool operator==(const UID& other) const;
+        bool operator==(const UUID& other) const;
 
-        bool operator<(const UID& other) const;
+        bool operator<(const UUID& other) const;
 
         std::ostream& operator<<(std::ostream& os) const;
 
     private:
-        inline static std::set<UID> uuids;
+        inline static std::set<UUID> uuids;
         std::array<uint32_t, 4> data;
     };
 
@@ -214,10 +214,10 @@ namespace RTTM
         RTTM::Registry registry;
 
     protected:
-        UID entityID;
+        UUID entityID;
 
     public:
-        UID GetEntityID() const
+        UUID GetEntityID() const
         {
             return entityID;
         }
@@ -271,9 +271,9 @@ namespace RTTM
 namespace std
 {
     template <>
-    struct hash<RTTM::UID>
+    struct hash<RTTM::UUID>
     {
-        size_t operator()(const RTTM::UID& uuid) const noexcept
+        size_t operator()(const RTTM::UUID& uuid) const noexcept
         {
             const auto& data = uuid.GetData();
             // 组合四个 32-bit 整数到哈希值
