@@ -9,7 +9,7 @@
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
-
+#include <array>
 #include "Object.hpp"
 
 namespace RTTM

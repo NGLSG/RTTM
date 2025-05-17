@@ -84,30 +84,13 @@ function(get_target_include_dirs TARGET OUTPUT_VAR)
     set(${OUTPUT_VAR} "${INCLUDE_DIRS}" PARENT_SCOPE)
 endfunction()
 
-# 获取目标所有链接库的函数
-function(get_target_all_link_libraries TARGET OUTPUT_VAR)
-    # 初始化链接库列表
-    set(ALL_LIBS "")
-
-    # 获取目标的直接链接库
-    get_target_property(TARGET_LIBS ${TARGET} LINK_LIBRARIES)
-    if(TARGET_LIBS)
-        list(APPEND ALL_LIBS ${TARGET_LIBS})
-    endif()
-
-    # 获取目标的接口链接库
-    get_target_property(TARGET_INTERFACE_LIBS ${TARGET} INTERFACE_LINK_LIBRARIES)
-    if(TARGET_INTERFACE_LIBS)
-        list(APPEND ALL_LIBS ${TARGET_INTERFACE_LIBS})
-    endif()
-
-    # 移除重复项
-    if(ALL_LIBS)
-        list(REMOVE_DUPLICATES ALL_LIBS)
-    endif()
-
-    # 设置输出变量
-    set(${OUTPUT_VAR} "${ALL_LIBS}" PARENT_SCOPE)
+# 生成头文件列表文件
+function(generate_headers_list_file OUTPUT_FILE HEADERS)
+    file(WRITE "${OUTPUT_FILE}" "")
+    foreach(HEADER ${HEADERS})
+        get_filename_component(HEADER_ABS "${HEADER}" ABSOLUTE)
+        file(APPEND "${OUTPUT_FILE}" "${HEADER_ABS}\n")
+    endforeach()
 endfunction()
 
 function(generate_reflection)
@@ -119,6 +102,12 @@ function(generate_reflection)
 
     if(NOT DEFINED REFL_HEADERS OR "${REFL_HEADERS}" STREQUAL "")
         message(STATUS "未指定头文件: generate_reflection(... HEADERS <头文件列表>) - 跳过反射生成")
+        return()
+    endif()
+
+    # 检查目标是否存在
+    if(NOT TARGET ${REFL_TARGET})
+        message(WARNING "目标 ${REFL_TARGET} 不存在，跳过反射生成")
         return()
     endif()
 
@@ -153,103 +142,56 @@ function(generate_reflection)
     # 获取已处理过的头文件列表
     get_property(PROCESSED_HEADERS GLOBAL PROPERTY RTTM_PROCESSED_HEADERS)
 
-    set(GENERATED_FILES "")
-    set(NEW_PROCESSED_HEADERS "")
-
+    # 过滤出未处理的头文件
+    set(UNPROCESSED_HEADERS "")
     foreach(HEADER ${REFL_HEADERS})
         get_filename_component(HEADER_ABS "${HEADER}" ABSOLUTE)
-        get_filename_component(HEADER_NAME "${HEADER}" NAME_WE)
-
-        # 检查该头文件是否已经处理过
         list(FIND PROCESSED_HEADERS "${HEADER_ABS}" HEADER_INDEX)
         if(HEADER_INDEX GREATER -1)
             message(STATUS "跳过已处理的头文件: ${HEADER}")
-            continue()
+        else()
+            list(APPEND UNPROCESSED_HEADERS "${HEADER_ABS}")
         endif()
-
-        # 记录新处理的头文件
-        list(APPEND NEW_PROCESSED_HEADERS "${HEADER_ABS}")
-
-        set(REFLECTION_FILE "${REFLECTION_OUTPUT_DIR}/${REFL_TARGET}_${HEADER_NAME}_reflection.cpp")
-        list(APPEND GENERATED_FILES "${REFLECTION_FILE}")
-
-        add_custom_command(
-                OUTPUT "${REFLECTION_FILE}"
-                COMMAND ${Python3_EXECUTABLE} "${GENERATOR_SCRIPT}" "${HEADER_ABS}" "${REFLECTION_FILE}" "${COMPILE_OPTIONS_FILE}" "${INCLUDE_PATHS_STR}"
-                DEPENDS "${HEADER_ABS}" "${GENERATOR_SCRIPT}" "${COMPILE_OPTIONS_FILE}"
-                COMMENT "为 ${HEADER} 生成反射代码"
-                VERBATIM
-        )
     endforeach()
 
-    # 更新全局已处理头文件列表
-    if(NEW_PROCESSED_HEADERS)
-        set_property(GLOBAL APPEND PROPERTY RTTM_PROCESSED_HEADERS ${NEW_PROCESSED_HEADERS})
-    endif()
-
-    if(GENERATED_FILES)
-        # 为反射代码创建一个对象库
-        add_library(${REFL_TARGET}_reflection OBJECT ${GENERATED_FILES})
-
-        # 设置和目标相同的包含目录
-        target_include_directories(${REFL_TARGET}_reflection PRIVATE ${TARGET_ALL_INCLUDE_DIRS})
-
-        # 添加生成的反射代码目录
-        target_include_directories(${REFL_TARGET}_reflection PRIVATE ${REFLECTION_OUTPUT_DIR})
-
-        # 获取原目标的所有链接库并应用到反射目标
-        get_target_all_link_libraries(${REFL_TARGET} TARGET_ALL_LINK_LIBS)
-
-        # 确保至少链接RTTM库
-        if(NOT TARGET_ALL_LINK_LIBS)
-            target_link_libraries(${REFL_TARGET}_reflection PRIVATE RTTM)
-        else()
-            # 将原始目标的所有链接库都链接到反射目标
-            # 但要避免链接自身，防止循环依赖
-            set(FILTERED_LINK_LIBS "")
-            foreach(LIB ${TARGET_ALL_LINK_LIBS})
-                if(NOT "${LIB}" STREQUAL "${REFL_TARGET}")
-                    list(APPEND FILTERED_LINK_LIBS ${LIB})
-                endif()
-            endforeach()
-
-            # 链接所有过滤后的库
-            target_link_libraries(${REFL_TARGET}_reflection PRIVATE ${FILTERED_LINK_LIBS})
-
-            # 确保RTTM被链接
-            target_link_libraries(${REFL_TARGET}_reflection PRIVATE RTTM)
-        endif()
-
-        # 获取原目标的编译定义并应用到反射目标
-        get_target_property(TARGET_COMPILE_DEFS ${REFL_TARGET} COMPILE_DEFINITIONS)
-        if(TARGET_COMPILE_DEFS)
-            target_compile_definitions(${REFL_TARGET}_reflection PRIVATE ${TARGET_COMPILE_DEFS})
-        endif()
-
-        # 获取原目标的编译选项并应用到反射目标
-        get_target_property(TARGET_COMPILE_OPTIONS ${REFL_TARGET} COMPILE_OPTIONS)
-        if(TARGET_COMPILE_OPTIONS)
-            target_compile_options(${REFL_TARGET}_reflection PRIVATE ${TARGET_COMPILE_OPTIONS})
-        endif()
-
-        # 获取原目标的编译特性并应用到反射目标
-        get_target_property(TARGET_COMPILE_FEATURES ${REFL_TARGET} COMPILE_FEATURES)
-        if(TARGET_COMPILE_FEATURES)
-            target_compile_features(${REFL_TARGET}_reflection PRIVATE ${TARGET_COMPILE_FEATURES})
-        endif()
-
-        # 重要：禁用反射目标的预编译头功能，避免冲突
-        set_target_properties(${REFL_TARGET}_reflection PROPERTIES
-                DISABLE_PRECOMPILE_HEADERS ON
-        )
-
-        # 将反射库链接到主目标
-        target_link_libraries(${REFL_TARGET} PRIVATE ${REFL_TARGET}_reflection)
-
-        message(STATUS "成功创建反射目标: ${REFL_TARGET}_reflection (${REFL_TARGET}的${GENERATED_FILES}个文件)")
-    else()
+    # 如果没有未处理的头文件，直接返回
+    if(NOT UNPROCESSED_HEADERS)
         message(STATUS "目标 ${REFL_TARGET} 没有新的头文件需要生成反射代码")
+        return()
     endif()
+
+    # 更新已处理头文件列表
+    set_property(GLOBAL APPEND PROPERTY RTTM_PROCESSED_HEADERS ${UNPROCESSED_HEADERS})
+
+    # 生成单一反射文件
+    set(REFLECTION_FILE "${REFLECTION_OUTPUT_DIR}/${REFL_TARGET}_reflection.cpp")
+
+    # 生成头文件列表文件
+    set(HEADERS_LIST_FILE "${REFLECTION_OUTPUT_DIR}/${REFL_TARGET}_headers.txt")
+    generate_headers_list_file(${HEADERS_LIST_FILE} "${UNPROCESSED_HEADERS}")
+
+    # 创建自定义命令，一次性处理所有头文件
+    add_custom_command(
+            OUTPUT "${REFLECTION_FILE}"
+            COMMAND ${Python3_EXECUTABLE} "${GENERATOR_SCRIPT}"
+            "--headers-list=${HEADERS_LIST_FILE}"
+            "--output=${REFLECTION_FILE}"
+            "--options=${COMPILE_OPTIONS_FILE}"
+            "--include-paths=${INCLUDE_PATHS_STR}"
+            DEPENDS "${HEADERS_LIST_FILE}" "${GENERATOR_SCRIPT}" "${COMPILE_OPTIONS_FILE}" ${UNPROCESSED_HEADERS}
+            COMMENT "为目标 ${REFL_TARGET} 生成合并的反射代码"
+            VERBATIM
+    )
+    message("命令:" ${Python3_EXECUTABLE} " ${GENERATOR_SCRIPT}"
+            " --headers-list=${HEADERS_LIST_FILE}"
+            " --output=${REFLECTION_FILE}"
+            " --options=${COMPILE_OPTIONS_FILE}"
+            " --include-paths=${INCLUDE_PATHS_STR}")
+
+    # 将生成的反射代码文件直接添加到原始目标中
+    target_sources(${REFL_TARGET} PRIVATE ${REFLECTION_FILE})
+
+    message(STATUS "成功添加反射代码到目标 ${REFL_TARGET} (包含 ${UNPROCESSED_HEADERS} 个头文件)")
 endfunction()
 
 function(rttm_add_reflection TARGET)
@@ -267,12 +209,6 @@ function(rttm_add_reflection TARGET)
             TARGET_TYPE STREQUAL "MODULE_LIBRARY" OR
             TARGET_TYPE STREQUAL "OBJECT_LIBRARY"))
         message(WARNING "目标 ${TARGET} 类型 (${TARGET_TYPE}) 不支持反射生成")
-        return()
-    endif()
-
-    # 检查这个目标是否已经有反射库
-    if(TARGET ${TARGET}_reflection)
-        message(STATUS "目标 ${TARGET} 已经有反射库，跳过重复生成")
         return()
     endif()
 
