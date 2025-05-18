@@ -61,8 +61,6 @@ class ReflectionGenerator:
             if path:
                 options.append(f'-I{path}')
 
-        # 仅识别当前头文件中定义的类
-        options.append('--analyze-headers-only')
 
         if self.compile_options_file and os.path.exists(self.compile_options_file):
             try:
@@ -98,7 +96,7 @@ class ReflectionGenerator:
         pch_content = """
         #ifndef REFLECTION_GENERATOR_PCH
         #define REFLECTION_GENERATOR_PCH
-        
+
         // 标准库
         #include <string>
         #include <vector>
@@ -110,7 +108,7 @@ class ReflectionGenerator:
         #include <functional>
         #include <algorithm>
         #include <iostream>
-        
+
         // 针对常见外部库的类型定义
         namespace ExternalTypeStubs {
             // 常见外部库的类型存根
@@ -122,9 +120,9 @@ class ReflectionGenerator:
             template<typename T> class expected {};
             template<typename T, typename E> class result {};
         }
-        
+
         using namespace ExternalTypeStubs;
-        
+
         #endif // REFLECTION_GENERATOR_PCH
         """
 
@@ -157,7 +155,8 @@ class ReflectionGenerator:
                 if diag.severity >= clang.cindex.Diagnostic.Error:
                     print(f"警告: {diag.spelling}", file=sys.stderr)
                     if diag.location.file:
-                        print(f"位置: {diag.location.file}:{diag.location.line}:{diag.location.column}", file=sys.stderr)
+                        print(f"位置: {diag.location.file}:{diag.location.line}:{diag.location.column}",
+                              file=sys.stderr)
                     has_errors = True
                 elif diag.severity == clang.cindex.Diagnostic.Warning:
                     # 只打印有用的警告信息
@@ -289,29 +288,35 @@ class ReflectionGenerator:
         return False
 
     def get_effective_access(self, cursor):
-        """获取节点的有效访问修饰符，考虑所有特殊情况"""
-        # 首先检查是否有预先记录的访问状态
-        cursor_id = str(cursor.hash)
-        if cursor_id in self.current_access_state:
-            return self.current_access_state[cursor_id]
+        """获取节点的有效访问修饰符，手动检查嵌套结构体是否在 private/protected 块中"""
+        # 1. 如果不是嵌套类型（全局/命名空间级别），默认 public
+        parent = cursor.semantic_parent
+        if not parent or parent.kind not in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL):
+            return clang.cindex.AccessSpecifier.PUBLIC
 
-        # 获取原始访问修饰符
-        access = cursor.access_specifier
+        # 2. 遍历父类的子节点，查找最近的访问修饰符
+        current_access = (
+            clang.cindex.AccessSpecifier.PRIVATE  # class 默认 private
+            if parent.kind == CursorKind.CLASS_DECL
+            else clang.cindex.AccessSpecifier.PUBLIC  # struct 默认 public
+        )
 
-        # 处理默认规则（如果没有显式标记）
-        if access == clang.cindex.AccessSpecifier.INVALID:
-            parent = cursor.semantic_parent
-            if parent and parent.kind == CursorKind.CLASS_DECL:
-                # 在class中默认是private
-                return clang.cindex.AccessSpecifier.PRIVATE
-            elif parent and parent.kind == CursorKind.STRUCT_DECL:
-                # 在struct中默认是public
-                return clang.cindex.AccessSpecifier.PUBLIC
-            else:
-                # 全局和命名空间级别默认是public
-                return clang.cindex.AccessSpecifier.PUBLIC
+        # 查找 cursor 是否在 private/protected 块中
+        found_cursor = False
+        for child in parent.get_children():
+            if child.kind == CursorKind.CXX_ACCESS_SPEC_DECL:
+                # 更新当前访问权限（遇到 private:/public:/protected:）
+                current_access = child.access_specifier
+            elif child == cursor:
+                # 找到当前节点，返回最近的访问修饰符
+                found_cursor = True
+                break
 
-        return access
+        # 如果找到 cursor，返回最近的访问修饰符；否则返回默认值
+        return current_access if found_cursor else (
+            clang.cindex.AccessSpecifier.PRIVATE if parent.kind == CursorKind.CLASS_DECL
+            else clang.cindex.AccessSpecifier.PUBLIC
+        )
 
     def is_truly_public(self, cursor):
         """检查一个类型是否真正是公开的（考虑所有父级）"""
@@ -454,6 +459,34 @@ class ReflectionGenerator:
             elif cursor.kind == CursorKind.ENUM_DECL:
                 self.process_enum(cursor)
 
+    def get_fully_qualified_type(self, type_obj):
+        """获取完整的类型名称（包括模板参数），处理 ELABORATED 类型"""
+        # 1. 如果是 ELABORATED 类型（如 struct Ref<Device>），尝试获取底层类型
+        if type_obj.kind == TypeKind.ELABORATED:
+            # 获取被修饰的底层类型（如 Ref<Device>）
+            canonical_type = type_obj.get_canonical()
+            if canonical_type.kind != TypeKind.ELABORATED:
+                return self.get_fully_qualified_type(canonical_type)
+
+            # 如果仍然是 ELABORATED，尝试从声明获取名称
+            decl = type_obj.get_declaration()
+            if decl:
+                return self.get_qualified_name(decl)  # 返回完全限定名（如 "Luma::Ref<Device>"）
+
+        # 2. 如果是模板实例化（如 Ref<Device>），获取模板名 + 参数
+        if type_obj.kind == TypeKind.UNEXPOSED:
+            decl = type_obj.get_declaration()
+            if decl and decl.kind == CursorKind.CLASS_TEMPLATE:
+                template_name = decl.spelling
+                template_args = []
+                for child in decl.get_children():
+                    if child.kind == CursorKind.TEMPLATE_TYPE_PARAMETER:
+                        template_args.append(child.spelling)
+                return f"{template_name}<{', '.join(template_args)}>"
+
+        # 3. 默认返回类型的拼写（可能不完整，但作为后备方案）
+        return type_obj.spelling
+
     def process_class(self, cursor):
         """处理类或结构体"""
         # 获取类名，对于模板特化使用displayname
@@ -467,187 +500,201 @@ class ReflectionGenerator:
             return
 
         # 跳过模板类（但不跳过模板特化）
-        if cursor.kind == CursorKind.CLASS_TEMPLATE or (self.is_template_class(cursor) and not self.is_template_specialization(cursor)):
-            self.skipped_types.append(f"{class_name} (普通模板类)")
+        if cursor.kind == CursorKind.CLASS_TEMPLATE or (
+                self.is_template_class(cursor) and not self.is_template_specialization(cursor)):
+            # self.skipped_types.append(f"{class_name} (普通模板类)") # 此信息已在collect_all_types中记录
             return
 
-        # 跳过外部类型
+        # 跳过外部类型 (此检查可能多余，因为collect_all_types已过滤)
         if self.is_external_type(cursor):
-            self.external_types.add(class_name)
+            # self.external_types.add(class_name) # 此信息已在collect_all_types中记录
             return
 
         # 获取完全限定名
         fully_qualified_name = self.get_qualified_name(cursor)
 
         # 保存简单类名（用于后续替换自引用类型）
-        simple_class_name = class_name.split('<')[0] if '<' in class_name else class_name
+        # simple_class_name 用于 correct_type_name 中的自引用检查
+        simple_class_name_for_self_ref = class_name.split('<')[0] if '<' in class_name else class_name
 
         # 获取命名空间（用于组织输出）
         namespace = self.get_namespace_path(cursor)
 
         # 检查该类型是否已经注册过，避免重复
         if fully_qualified_name in self.registered_types:
-            print(f"跳过已注册的类型: {fully_qualified_name}")
+            # print(f"跳过已注册的类型: {fully_qualified_name}") # 此信息已在process_filtered_types中处理
             return
 
-        # 记录类型已被注册
-        self.registered_types.add(fully_qualified_name)
+        # 记录类型已被注册 (实际应在成功生成代码后添加，此处提前仅为逻辑占位)
+        # self.registered_types.add(fully_qualified_name) # 移至实际生成代码后
 
         properties = []
         methods = []
         constructors = []
 
+        # --- 修改开始: 为 correct_type_name 构建更全面的类型查找表 ---
+        # local_namespace_types 将包含从 self.type_infos (所有收集到的类型) 中提取的 simple_name -> FQN 映射
+        local_namespace_types = {}
+        for fqn_collected_type in self.type_infos.keys():  # self.type_infos 的键是收集到的类型的FQN
+            simple_name_collected = fqn_collected_type.split("::")[-1]
+
+            # 对于模板类型如 "MyClass<int>"，我们希望简单名称是 "MyClass" 作为键
+            if '<' in simple_name_collected:
+                simple_name_collected = simple_name_collected.split("<")[0]
+
+            # 如果简单名称发生冲突（例如不同命名空间下的同名类型），
+            # 这里的基本策略是先收集到的优先。在更复杂的场景下可能需要更精细的策略。
+            if simple_name_collected not in local_namespace_types:
+                local_namespace_types[simple_name_collected] = fqn_collected_type
+        # --- 修改结束 ---
+
         # 收集类中的成员和方法
         for member in cursor.get_children():
-            # 获取成员的有效访问修饰符
             access = self.get_effective_access(member)
-
-            # 只考虑公共成员且非静态成员，跳过私有和保护成员
             if access == clang.cindex.AccessSpecifier.PUBLIC and not self.is_static_member(member):
                 if member.kind == CursorKind.FIELD_DECL:
-                    # 检查字段类型是否是外部类型
-                    field_type = member.type.spelling
-                    is_external = False
-                    for ext_type in self.external_types:
-                        if ext_type in field_type:
-                            is_external = True
-                            break
-
+                    field_type_from_clang = self.get_fully_qualified_type(member.type)  # 使用您脚本中已有的辅助函数
+                    is_external = any(ext_type in field_type_from_clang for ext_type in self.external_types)
                     if not is_external:
                         properties.append(member.spelling)
                 elif member.kind == CursorKind.CXX_METHOD:
                     if member.spelling != class_name and not member.spelling.startswith('~'):
-                        # 检查方法返回类型和参数类型
-                        return_type = member.result_type.spelling
-                        param_types = [param.type.spelling for param in member.get_arguments()]
+                        return_type_str = member.result_type.spelling  # 原始字符串
+                        param_types_str_list = [param.type.spelling for param in member.get_arguments()]  # 原始字符串列表
+                        is_const_method = member.is_const_method()
 
-                        # 检查方法是否为const
-                        is_const = member.is_const_method()
-
+                        # 检查原始类型字符串中是否有外部类型 (简单检查)
                         is_external = False
-                        for ext_type in self.external_types:
-                            if ext_type in return_type:
-                                is_external = True
-                                break
-                            for param_type in param_types:
-                                if ext_type in param_type:
+                        if any(ext_type in return_type_str for ext_type in self.external_types):
+                            is_external = True
+                        if not is_external:
+                            for pt_str in param_types_str_list:
+                                if any(ext_type in pt_str for ext_type in self.external_types):
                                     is_external = True
                                     break
-                            if is_external:
-                                break
 
                         if not is_external:
-                            # 收集方法的完整签名信息用于注册
-                            method_info = {
+                            methods.append({
                                 'name': member.spelling,
-                                'return_type': return_type,
-                                'param_types': param_types,
-                                'is_const': is_const
-                            }
-                            methods.append(method_info)
+                                'return_type_orig': return_type_str,  # 存储原始，待修正
+                                'param_types_orig': param_types_str_list,  # 存储原始，待修正
+                                'is_const': is_const_method
+                            })
                 elif member.kind == CursorKind.CONSTRUCTOR:
-                    # 分析构造函数参数类型
-                    param_types = []
+                    param_types_str_list = []
                     is_external = False
-
                     for param in member.get_arguments():
-                        type_str = param.type.spelling
-
-                        for ext_type in self.external_types:
-                            if ext_type in type_str:
-                                is_external = True
-                                break
-
-                        if not is_external:
-                            param_types.append(type_str)
+                        type_str = param.type.spelling  # 原始字符串
+                        if any(ext_type in type_str for ext_type in self.external_types):
+                            is_external = True
+                            break
+                        param_types_str_list.append(type_str)
 
                     if not is_external:
-                        constructors.append(param_types)
+                        constructors.append(param_types_str_list)  # 存储原始，待修正
 
-        # 获取该命名空间下的所有已知类型，用于替换类型引用
-        namespace_types = {}
-        for type_name in self.registered_types:
-            if "::" in type_name:
-                simple_name = type_name.split("::")[-1]
-                namespace_types[simple_name] = type_name
+        # 如果没有可反射的成员，则不继续生成该类的注册代码
+        if not properties and not methods and not constructors:
+            self.skipped_types.append(f"{fully_qualified_name} (无公开可反射成员)")
+            return  # 不将此类加入 registered_types 或 resolved_types
 
-        # 生成注册代码
-        if properties or methods or constructors:
-            self.resolved_types.add(fully_qualified_name)
+        # 实际将要生成代码，此时才记录
+        self.registered_types.add(fully_qualified_name)
+        self.resolved_types.add(fully_qualified_name)
 
-            # 生成类注册代码（不包含RTTM_REGISTRATION块）
-            short_name = class_name.split('<')[0] if '<' in class_name else class_name
-            registration = f"    // {short_name} 类的反射注册\n"
-            registration += f"    Registry_<{fully_qualified_name}>()\n"
+        # 准备生成注册代码
+        short_name_for_comment = class_name.split('<')[0] if '<' in class_name else class_name
+        registration = f"    // {short_name_for_comment} ({fully_qualified_name}) 类的反射注册\n"
+        registration += f"    Registry_<{fully_qualified_name}>()\n"
 
-            # 添加属性
-            for prop in properties:
-                registration += f"        .property(\"{prop}\", &{fully_qualified_name}::{prop})\n"
+        for prop in properties:
+            registration += f"        .property(\"{prop}\", &{fully_qualified_name}::{prop})\n"
 
-            # 添加方法（处理函数重载情况）
-            for method_info in methods:
-                method_name = method_info['name']
-                return_type = method_info['return_type']
-                param_types = method_info['param_types']
-                is_const = method_info['is_const']
+        # ======================================================================
+        # 完整 的 correct_type_name 嵌套函数定义 (使用 local_namespace_types)
+        # ======================================================================
+        def correct_type_name(type_name_str_to_correct):
+            """
+            修正类型名称字符串，尝试将其简单名称部分替换为已知的FQN。
+            处理 const, 指针(*), 引用(&)。
+            """
+            original_full_str = type_name_str_to_correct  # 例如 "const MyType&", "MyType *", "MyType"
 
-                # 修正类型名称函数
-                def correct_type_name(type_name):
-                    # 处理引用和const修饰
-                    type_parts = type_name.split()
-                    main_type = type_parts[-1].rstrip('&').strip()
+            if not type_name_str_to_correct:
+                return ""
 
-                    # 检查是否是已知的命名空间类型
-                    for known_type, full_name in namespace_types.items():
-                        # 检查类型名是否匹配或是否为该类型的引用形式
-                        if main_type == known_type:
-                            # 构建替换后的类型名
-                            replaced_main = full_name
-                            if type_parts[-1].endswith('&'):
-                                replaced_main += " &"
-                            if len(type_parts) > 1 and 'const' in type_parts:
-                                return f"const {replaced_main}"
-                            return replaced_main
+            # 提取前缀 (const), 后缀 (*, &), 和主类型名
+            prefix = ""
+            suffix = ""
+            main_part = type_name_str_to_correct
 
-                    # 如果是当前类的简单名称
-                    if main_type == simple_class_name:
-                        replaced_main = fully_qualified_name
-                        if type_parts[-1].endswith('&'):
-                            replaced_main += " &"
-                        if len(type_parts) > 1 and 'const' in type_parts:
-                            return f"const {replaced_main}"
-                        return replaced_main
+            if main_part.startswith("const "):
+                prefix = "const "
+                main_part = main_part[len("const "):].strip()
 
-                    return type_name
+            # 处理后缀，注意可能有多个指针，但通常只有一个引用
+            # 这个简化处理只取最后一个*或&
+            if main_part.endswith("&&"):  # 右值引用优先
+                suffix = "&&"
+                main_part = main_part[:-2].strip()
+            elif main_part.endswith("&"):  # 左值引用
+                suffix = "&"
+                main_part = main_part[:-1].strip()
+            elif main_part.endswith("*"):  # 指针
+                suffix = "*"
+                main_part = main_part[:-1].strip()
 
-                # 修正返回类型和参数类型
-                corrected_return_type = correct_type_name(return_type)
-                corrected_param_types = [correct_type_name(param_type) for param_type in param_types]
+            # main_part 现在应该是核心类型名，如 "CommandPool", "int", "std::vector<int>"
 
-                # 构建函数指针类型转换，处理重载情况
-                const_suffix = " const" if is_const else ""
+            # 如果核心类型名已包含 "::"，则认为它已经是限定名或来自std等已知命名空间
+            if "::" in main_part:
+                return original_full_str  # 直接返回原始字符串，因为假定它已ok或来自外部(如std::)
 
-                if corrected_param_types:
-                    # 生成函数指针类型转换，用于处理函数重载
-                    function_type = f"({corrected_return_type} ({fully_qualified_name}::*)({', '.join(corrected_param_types)}){const_suffix})"
-                    # 在模板参数中也使用修正后的类型
-                    registration += f"        .method<{corrected_return_type}, {', '.join(corrected_param_types)}>(\"{method_name}\", {function_type}&{fully_qualified_name}::{method_name})\n"
-                else:
-                    # 无参数函数的处理
-                    function_type = f"({corrected_return_type} ({fully_qualified_name}::*)(){const_suffix})"
-                    registration += f"        .method<{corrected_return_type}>(\"{method_name}\", {function_type}&{fully_qualified_name}::{method_name})\n"
+            # 检查是否是自引用 (当前类的简单名称)
+            # simple_class_name_for_self_ref 来自外部 process_class 方法作用域
+            if main_part == simple_class_name_for_self_ref:
+                return prefix + fully_qualified_name + suffix  # fully_qualified_name 是当前类的FQN
 
-            # 添加构造函数
-            for ctor_params in constructors:
-                if not ctor_params:
-                    registration += f"        .constructor<>()\n"
-                else:
-                    # 修正构造函数参数中的类型引用
-                    corrected_ctor_params = [correct_type_name(param_type) for param_type in ctor_params]
-                    registration += f"        .constructor<{', '.join(corrected_ctor_params)}>()\n"
+            # 检查是否与 local_namespace_types 中的已知类型匹配
+            # local_namespace_types 来自外部 process_class 方法作用域
+            if main_part in local_namespace_types:
+                return prefix + local_namespace_types[main_part] + suffix
 
-            registration += "    ;"
-            self.namespace_registrations[namespace].append(registration)
+            # 如果没有找到匹配，并且它不是基本类型 (这里简单判断，更复杂的可能需要类型检查)
+            # 则返回原始的、可能未完全限定的名称。基本类型如 "int" 会落到这里。
+            return original_full_str
+
+        # ======================================================================
+        # correct_type_name 定义结束
+        # ======================================================================
+
+        for method_info in methods:
+            method_name = method_info['name']
+            # 使用 correct_type_name 修正原始类型字符串
+            corrected_return_type = correct_type_name(method_info['return_type_orig'])
+            corrected_param_types = [correct_type_name(pt) for pt in method_info['param_types_orig']]
+            is_const = method_info['is_const']
+
+            const_suffix = " const" if is_const else ""
+
+            param_list_for_signature = ', '.join(corrected_param_types)
+            function_ptr_cast = f"({corrected_return_type} ({fully_qualified_name}::*)({param_list_for_signature}){const_suffix})"
+
+            template_args_list = [corrected_return_type] + corrected_param_types
+            template_args_str = ", ".join(template_args_list)
+
+            registration += f"        .method<{template_args_str}>(\"{method_name}\", {function_ptr_cast}&{fully_qualified_name}::{method_name})\n"
+
+        for ctor_params_orig_list in constructors:
+            if not ctor_params_orig_list:
+                registration += f"        .constructor<>()\n"
+            else:
+                # 使用 correct_type_name 修正原始类型字符串
+                corrected_ctor_params = [correct_type_name(pt) for pt in ctor_params_orig_list]
+                registration += f"        .constructor<{', '.join(corrected_ctor_params)}>()\n"
+
+        registration += "    ;"
+        self.namespace_registrations[namespace].append(registration)
 
     def process_enum(self, cursor):
         """处理枚举类型"""
