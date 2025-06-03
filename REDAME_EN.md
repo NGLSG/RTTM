@@ -10,7 +10,9 @@
 
 ## Overview
 
-RTTM is a high-performance dynamic reflection library based on C++17 standard with no external dependencies, designed specifically for game engines and other performance-sensitive applications. It supports MSVC, GCC, and Clang compilers, providing run-time type information, dynamic object creation, and method invocation capabilities.
+RTTM is a high-performance dynamic reflection library based on C++17 standard with no external dependencies, designed
+specifically for game engines and other performance-sensitive applications. It supports MSVC, GCC, and Clang compilers,
+providing run-time type information, dynamic object creation, and method invocation capabilities.
 
 ## ✨ Core Features
 
@@ -18,7 +20,8 @@ RTTM is a high-performance dynamic reflection library based on C++17 standard wi
 - **Cross-Compiler Compatibility** - Full support for MSVC, GCC, and Clang
 - **Comprehensive Reflection** - Reflect enums, classes, structs, templates, global variables, and functions
 - **Dynamic Instantiation** - Support for dynamic object creation and method invocation
-- **High-Performance Design** - Significantly outperforms mainstream libraries in reflection calls, as demonstrated by benchmarks
+- **High-Performance Design** - Significantly outperforms mainstream libraries in reflection calls, as demonstrated by
+  benchmarks
 - **User-Friendly API** - Intuitive API design with fluent chain-style calls
 - **Memory Efficiency** - Optimized memory usage, 50% less than competing libraries
 
@@ -175,45 +178,280 @@ std::string greeting = personType->Invoke<std::string>("greeting");
 ### ECS Implementation Example
 
 ```cpp
-#include <RTTM/RTTM.hpp>
-#include <RTTM/Entity.hpp>
+#include "RTTM/Entity.hpp"
 #include <iostream>
+#include <vector>
+#include <memory>
 
-// Define component
-class Transform {
+// Base component definitions
+class Transform : public RTTM::Component
+{
 public:
-    struct Vec3 { float x, y, z; };
-    Vec3 position{0,0,0};
-    Vec3 rotation{0,0,0};
-    Vec3 scale{1,1,1};
-    
-    void translate(float x, float y, float z) {
-        position.x += x;
-        position.y += y;
-        position.z += z;
+    float x = 0.0f, y = 0.0f;
+    float rotation = 0.0f;
+
+    Transform(float x = 0, float y = 0) : x(x), y(y)
+    {
+    }
+
+    void Move(float dx, float dy)
+    {
+        x += dx;
+        y += dy;
+    }
+
+    std::string GetTypeName() const override { return "Transform"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Transform)); }
+};
+
+class Health : public RTTM::Component
+{
+public:
+    int maxHP = 100;
+    int currentHP = 100;
+
+    Health(int hp = 100) : maxHP(hp), currentHP(hp)
+    {
+    }
+
+    void TakeDamage(int damage)
+    {
+        currentHP -= damage;
+        if (currentHP < 0) currentHP = 0;
+    }
+
+    bool IsAlive() const { return currentHP > 0; }
+
+    std::string GetTypeName() const override { return "Health"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Health)); }
+};
+
+// Base renderer class
+class Renderer : public RTTM::Component
+{
+public:
+    bool visible = true;
+    virtual void Render() = 0;
+
+    std::string GetTypeName() const override { return "Renderer"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Renderer)); }
+};
+
+class SpriteRenderer : public Renderer
+{
+public:
+    std::string sprite;
+
+    SpriteRenderer(const std::string& s) : sprite(s)
+    {
+    }
+
+    void Render() override
+    {
+        std::cout << "Rendering sprite: " << sprite << std::endl;
+    }
+
+    std::string GetTypeName() const override { return "SpriteRenderer"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(SpriteRenderer)); }
+};
+
+// Weapon component
+class Weapon : public RTTM::Component
+{
+public:
+    int damage = 10;
+    std::string weaponType;
+
+    Weapon(const std::string& type, int dmg) : weaponType(type), damage(dmg)
+    {
+    }
+
+    void Attack()
+    {
+        std::cout << "Attacking with " << weaponType << ", dealing " << damage << " damage!" << std::endl;
+    }
+
+    std::string GetTypeName() const override { return "Weapon"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Weapon)); }
+};
+
+// Special entity class - Warrior
+class Warrior : public RTTM::Entity
+{
+public:
+    Warrior(float x, float y)
+    {
+        AddComponent<Transform>(x, y);
+        AddComponent<Health>(150); // Warrior has more HP
+        AddComponent<SpriteRenderer>("WarriorSprite");
+        AddComponent<Weapon>("Longsword", 25);
+    }
+
+    void Attack(RTTM::Entity& target)
+    {
+        auto& weapon = GetComponent<Weapon>();
+        weapon.Attack();
+
+        // If target has Health component, deal damage
+        if (target.HasComponent<Health>())
+        {
+            auto& targetHealth = target.GetComponent<Health>();
+            targetHealth.TakeDamage(weapon.damage);
+            std::cout << "Target's remaining HP: " << targetHealth.currentHP << std::endl;
+        }
     }
 };
 
-REQUIRE_COMPONENT(Transform)  // Register component
-
-// Define entity
-class GameObject : public RTTM::Entity {
+// Mage class requiring specific components
+class Mage : REQUIRE_COMPONENTS(Transform, Health)
+{
 public:
-    Transform& transform() {
-        return GetComponent<Transform>();
+    int mana = 100;
+
+    Mage(float x, float y) : mana(100)
+    {
+        // Transform and Health are automatically added
+        AddComponent<SpriteRenderer>("MageSprite");
+
+        // Set mage attributes
+        GetComponent<Health>().maxHP = 80; // Mage has less HP
+        GetComponent<Health>().currentHP = 80;
+    }
+
+    void CastSpell(RTTM::Entity& target)
+    {
+        if (mana >= 20)
+        {
+            mana -= 20;
+            std::cout << "Mage casts Fireball! Consumes 20 mana" << std::endl;
+
+            if (target.HasComponent<Health>())
+            {
+                auto& targetHealth = target.GetComponent<Health>();
+                targetHealth.TakeDamage(30);
+                std::cout << "Fireball deals 30 magic damage! Target's remaining HP: " << targetHealth.currentHP << std::endl;
+            }
+        }
+        else
+        {
+            std::cout << "Not enough mana!" << std::endl;
+        }
     }
 };
 
-int main() {
-    // Create game object and manipulate component
-    GameObject player;
-    player.transform().position = {10, 5, 0};
-    player.transform().translate(0, 0, 10);
-    
-    std::cout << "Player position: " 
-              << player.transform().position.x << ", "
-              << player.transform().position.y << ", "
-              << player.transform().position.z << std::endl;
+// Game system class
+class GameSystem
+{
+public:
+    // Movement system - processes all entities with Transform
+    static void UpdateMovement(std::vector<std::unique_ptr<RTTM::Entity>>& entities, float deltaTime)
+    {
+        std::cout << "\n=== Movement System Update ===" << std::endl;
+        for (auto& entity : entities)
+        {
+            if (entity->HasComponent<Transform>())
+            {
+                auto& transform = entity->GetComponent<Transform>();
+                // Simple movement logic
+                transform.Move(1.0f * deltaTime, 0.5f * deltaTime);
+                std::cout << "Entity moved to: (" << transform.x << ", " << transform.y << ")" << std::endl;
+            }
+        }
+    }
+
+    // Rendering system - processes all entities with renderers
+    static void Render(std::vector<std::unique_ptr<RTTM::Entity>>& entities)
+    {
+        std::cout << "\n=== Rendering System Update ===" << std::endl;
+        for (auto& entity : entities)
+        {
+            // Using dynamic type lookup to support inheritance
+            if (entity->HasComponentDynamic<Renderer>())
+            {
+                auto& renderer = entity->GetComponentDynamic<Renderer>();
+                if (renderer.visible)
+                {
+                    renderer.Render();
+                }
+            }
+        }
+    }
+
+    // Health display system
+    static void ShowHealthStatus(std::vector<std::unique_ptr<RTTM::Entity>>& entities)
+    {
+        std::cout << "\n=== Health Status ===" << std::endl;
+        for (auto& entity : entities)
+        {
+            if (entity->HasComponent<Health>())
+            {
+                auto& health = entity->GetComponent<Health>();
+                std::cout << "Entity HP: " << health.currentHP << "/" << health.maxHP;
+                if (!health.IsAlive())
+                {
+                    std::cout << " (DEAD)";
+                }
+                std::cout << std::endl;
+            }
+        }
+    }
+};
+
+int main()
+{
+    std::cout << "=== ECS Game System Demo ===" << std::endl;
+
+    // Create game entities
+    std::vector<std::unique_ptr<RTTM::Entity>> gameEntities;
+
+    // Create warrior
+    auto warrior = std::make_unique<Warrior>(10.0f, 20.0f);
+
+    // Create mage (required components are automatically added)
+    auto mage = std::make_unique<Mage>(5.0f, 15.0f);
+
+    std::cout << "\n=== Verifying Automatic Component Addition ===" << std::endl;
+    std::cout << "Mage has Transform component: " << mage->HasComponent<Transform>() << std::endl;
+    std::cout << "Mage has Health component: " << mage->HasComponent<Health>() << std::endl;
+
+    // Demonstrate polymorphism
+    std::cout << "\n=== Polymorphic Component Lookup ===" << std::endl;
+    std::cout << "Warrior has renderer (dynamic lookup): " << warrior->HasComponentDynamic<Renderer>() << std::endl;
+    std::cout << "Mage has renderer (dynamic lookup): " << mage->HasComponentDynamic<Renderer>() << std::endl;
+
+    gameEntities.push_back(std::move(warrior));
+    gameEntities.push_back(std::move(mage));
+
+    // Get references for combat demo
+    Warrior* warriorPtr = static_cast<Warrior*>(gameEntities[0].get());
+    Mage* magePtr = static_cast<Mage*>(gameEntities[1].get());
+
+    // Simulate game loop
+    std::cout << "\n=== Game Start ===" << std::endl;
+
+    // Initial state
+    GameSystem::ShowHealthStatus(gameEntities);
+    GameSystem::Render(gameEntities);
+
+    // Combat round 1
+    std::cout << "\n=== Combat Round 1 ===" << std::endl;
+    warriorPtr->Attack(*magePtr);
+    magePtr->CastSpell(*warriorPtr);
+
+    // Movement and rendering
+    GameSystem::UpdateMovement(gameEntities, 1.0f);
+    GameSystem::ShowHealthStatus(gameEntities);
+
+    // Combat round 2
+    std::cout << "\n=== Combat Round 2 ===" << std::endl;
+    magePtr->CastSpell(*warriorPtr);
+    warriorPtr->Attack(*magePtr);
+
+    GameSystem::ShowHealthStatus(gameEntities);
+    GameSystem::Render(gameEntities);
+
+    std::cout << "\n=== Game Over ===" << std::endl;
+
     return 0;
 }
 ```
@@ -297,7 +535,8 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## 👥 Contributing
 
-We welcome all forms of contributions, including but not limited to feature requests, bug reports, documentation improvements, code optimizations, etc.
+We welcome all forms of contributions, including but not limited to feature requests, bug reports, documentation
+improvements, code optimizations, etc.
 
 1. Fork this repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)

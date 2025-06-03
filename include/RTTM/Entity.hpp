@@ -83,27 +83,6 @@ namespace RTTM
         }
     };
 
-    template <typename Derived>
-    class ComponentBase : public Component
-    {
-    public:
-        std::string GetTypeName() const override
-        {
-            return typeid(Derived).name(); // 或者可以用更友好的名称
-        }
-
-        std::type_index GetTypeIndex() const override
-        {
-            return std::type_index(typeid(Derived));
-        }
-    };
-
-    // 便利宏，自动实现组件基类的虚函数
-#define DECLARE_COMPONENT(ClassName) \
-    public: \
-        virtual std::string GetTypeName() const override { return #ClassName; } \
-        virtual std::type_index GetTypeIndex() const override { return std::type_index(typeid(ClassName)); }
-
     class Registry
     {
     public:
@@ -339,7 +318,9 @@ namespace RTTM
             return entityID;
         }
 
-        Entity();
+        Entity()
+        {
+        }
 
         virtual ~Entity() = default;
 
@@ -441,95 +422,21 @@ namespace RTTM
         }
     };
 
-    namespace ComponentRequirement
+
+    //特化的 EntityWithComponents 类，用于自动添加组件
+    template <typename... ComponentTypes>
+    class EntityWithComponents : public Entity
     {
-        inline std::vector<std::type_index> pendingRequirements;
-
-        inline std::unordered_map<std::type_index, std::vector<std::type_index>> classRequirements;
-        inline std::unordered_map<std::type_index, std::function<void(void*)>> componentCreators;
-
-        template <typename ComponentType>
-        void AddPendingRequirement()
+    public:
+        EntityWithComponents()
         {
-            pendingRequirements.push_back(std::type_index(typeid(ComponentType)));
-
-            auto typeIdx = std::type_index(typeid(ComponentType));
-            if (componentCreators.find(typeIdx) == componentCreators.end())
-            {
-                componentCreators[typeIdx] = [](void* entityPtr)
-                {
-                    auto entity = static_cast<RTTM::Entity*>(entityPtr);
-                    entity->template GetOrAddComponent<ComponentType>();
-                };
-            }
+            // 在构造函数中添加所需组件
+            (GetOrAddComponent<ComponentTypes>(), ...);
         }
-
-        template <typename ClassType>
-        void CaptureRequirements()
-        {
-            if (!pendingRequirements.empty())
-            {
-                classRequirements[std::type_index(typeid(ClassType))] = std::move(pendingRequirements);
-                pendingRequirements.clear();
-            }
-        }
-
-        template <typename ClassType>
-        bool HasRequirements()
-        {
-            return classRequirements.find(std::type_index(typeid(ClassType))) != classRequirements.end();
-        }
-
-        template <typename ClassType, typename Entity>
-        void ApplyRequirements(Entity& entity)
-        {
-            auto it = classRequirements.find(std::type_index(typeid(ClassType)));
-            if (it != classRequirements.end())
-            {
-                for (const auto& compType : it->second)
-                {
-                    auto creatorIt = componentCreators.find(compType);
-                    if (creatorIt != componentCreators.end())
-                    {
-                        creatorIt->second(static_cast<void*>(&entity));
-                    }
-                }
-            }
-        }
-    }
-
-#define CONCAT_IMPL(a, b) a##b
-#define CONCAT(a, b) CONCAT_IMPL(a, b)
-#define UNIQUE_NAME(base) CONCAT(base, __LINE__)
-
-#define REQUIRE_COMPONENT(ComponentType) \
-namespace { \
-struct UNIQUE_NAME(ComponentRegistrar) { \
-UNIQUE_NAME(ComponentRegistrar)() { \
-RTTM::ComponentRequirement::AddPendingRequirement<ComponentType>(); \
-} \
-}; \
-static UNIQUE_NAME(ComponentRegistrar) UNIQUE_NAME(registrar_instance); \
+    };
 }
 
-#define REQUIRE_COMPONENTS(...) \
-namespace UNIQUE_NAME(ComponentReg) { \
-struct ComponentRegistrar { \
-ComponentRegistrar() { \
-int dummy[] = {(RTTM::ComponentRequirement::AddPendingRequirement<__VA_ARGS__>(), 0)...}; \
-(void)dummy; \
-} \
-}; \
-static ComponentRegistrar registrar; \
-}
-
-    inline Entity::Entity()
-    {
-        ComponentRequirement::CaptureRequirements<std::remove_cv_t<std::remove_reference_t<decltype(*this)>>>();
-
-        ComponentRequirement::ApplyRequirements<std::remove_cv_t<std::remove_reference_t<decltype(*this)>>>(*this);
-    }
-}
+#define REQUIRE_COMPONENTS(...)  public RTTM::EntityWithComponents<__VA_ARGS__>
 
 namespace std
 {
