@@ -22,91 +22,6 @@
 
 namespace RTTM
 {
-    // UUID
-    struct UUID
-    {
-    public:
-        // 默认构造函数，初始化为全零
-        UUID() : data({0, 0, 0, 0})
-        {
-        }
-
-        // 生成新的UUID
-        static UUID New()
-        {
-            UUID newUuid;
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::uniform_int_distribution<uint32_t> dis;
-
-            // 生成随机UUID并确保唯一性
-            do
-            {
-                for (int i = 0; i < 4; ++i)
-                {
-                    newUuid.data[i] = dis(gen);
-                }
-            }
-            while (uuids.find(newUuid) != uuids.end());
-
-            uuids.insert(newUuid);
-            return newUuid;
-        }
-
-        // 转换为字符串表示
-        std::string toString() const
-        {
-            std::stringstream ss;
-            ss << std::hex << std::setfill('0');
-            // 格式：XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-            ss << std::setw(8) << data[0] << "-";
-            ss << std::setw(4) << (data[1] >> 16) << "-";
-            ss << std::setw(4) << (data[1] & 0xFFFF) << "-";
-            ss << std::setw(4) << (data[2] >> 16) << "-";
-            ss << std::setw(4) << (data[2] & 0xFFFF);
-            ss << std::setw(8) << data[3];
-            return ss.str();
-        }
-
-        // 获取UUID数据
-        std::array<uint32_t, 4> GetData() const { return data; }
-
-        // 设置UUID数据
-        void SetData(const std::array<uint32_t, 4>& newData) { this->data = newData; }
-
-        // 相等比较运算符
-        bool operator==(const UUID& other) const
-        {
-            return data[0] == other.data[0] && data[1] == other.data[1] &&
-                data[2] == other.data[2] && data[3] == other.data[3];
-        }
-
-        // 不等比较运算符
-        bool operator!=(const UUID& other) const { return !(*this == other); }
-
-        // 小于比较运算符（用于std::set排序）
-        bool operator<(const UUID& other) const
-        {
-            for (int i = 0; i < 4; ++i)
-            {
-                if (data[i] < other.data[i]) return true;
-                if (data[i] > other.data[i]) return false;
-            }
-            return false;
-        }
-
-        // 输出流运算符
-        friend std::ostream& operator<<(std::ostream& os, const UUID& uuid)
-        {
-            os << uuid.toString();
-            return os;
-        }
-
-    private:
-        inline static std::set<UUID> uuids; // 用于确保UUID唯一性的静态集合
-        std::array<uint32_t, 4> data; // UUID数据，4个32位整数
-    };
-
     // 前向声明
     class Entity;
     class ComponentBase;
@@ -117,7 +32,7 @@ namespace RTTM
     // 类型检查器函数类型定义
     using TypeChecker = std::function<bool(const std::shared_ptr<ComponentBase>&)>;
 
-    //检测 IsSingleton 方法
+    // 检测 IsSingleton 方法
     template <typename T>
     class has_is_singleton_method
     {
@@ -367,7 +282,7 @@ namespace RTTM
         // 根据基类类型查找现有的具体组件类型
         static std::optional<std::type_index> FindExistingComponentByBase(
             const std::type_index& baseType,
-            const std::unordered_map<std::type_index, std::shared_ptr<ComponentBase>>& entities,
+            const std::unordered_map<std::type_index, std::vector<std::shared_ptr<ComponentBase>>>& entities,
             const std::unordered_map<std::type_index, std::shared_ptr<ComponentBase>>& singletonComponents)
         {
             // 首先检查单例组件映射
@@ -378,9 +293,9 @@ namespace RTTM
             }
 
             // 然后检查所有实体组件，查找继承自该基类的组件
-            for (const auto& [typeIndex, component] : entities)
+            for (const auto& [typeIndex, componentList] : entities)
             {
-                if (IsInstanceOf(component, baseType))
+                if (!componentList.empty() && IsInstanceOf(componentList[0], baseType))
                 {
                     return typeIndex;
                 }
@@ -528,7 +443,6 @@ namespace RTTM
         }
     };
 
-
     // 自动注册的组件基类模板
     template <typename Derived>
     class Component : public ComponentBase
@@ -599,11 +513,12 @@ namespace RTTM
     class Registry
     {
     public:
-        using EntityMap = std::unordered_map<std::type_index, std::shared_ptr<ComponentBase>>;
+        // 修改存储结构：支持每个类型存储多个组件实例
+        using EntityMap = std::unordered_map<std::type_index, std::vector<std::shared_ptr<ComponentBase>>>;
         using ComponentList = std::vector<std::shared_ptr<ComponentBase>>;
 
     private:
-        EntityMap entities;
+        EntityMap entities; // 存储所有组件类型及其实例列表
         ComponentList allComponents; // 保存所有组件的列表，用于遍历查找
         std::set<std::type_index> requiredComponents; // 存储必需的组件类型
         // 单例组件存储: 单例基类类型 -> 组件实例
@@ -695,26 +610,22 @@ namespace RTTM
                     auto component = std::make_shared<T>();
                     component->SetOwner(ownerEntity);
 
-                    // 使用 emplace 而不是 operator[]
+                    // 单例组件存储
                     singletonComponents.emplace(baseTypeIndex, component);
-                    entities.emplace(typeIndex, component);
+                    entities[typeIndex].push_back(component);
                     allComponents.push_back(component);
 
                     return *component;
                 }
             }
 
-            if (Contains<T>())
-            {
-                return Get<T>().value();
-            }
-
+            // 非单例组件允许重复添加
             // 先添加依赖组件
             AddComponentDependencies<T>();
 
             auto component = std::make_shared<T>();
             component->SetOwner(ownerEntity);
-            entities.emplace(typeIndex, component);
+            entities[typeIndex].push_back(component);
             allComponents.push_back(component);
             return *component;
         }
@@ -767,27 +678,22 @@ namespace RTTM
                     auto component = std::make_shared<T>(std::forward<Args>(args)...);
                     component->SetOwner(ownerEntity);
 
-                    // 使用 emplace 而不是 operator[]
+                    // 单例组件存储
                     singletonComponents.emplace(baseTypeIndex, component);
-                    entities.emplace(typeIndex, component);
+                    entities[typeIndex].push_back(component);
                     allComponents.push_back(component);
 
                     return *component;
                 }
             }
 
-            if (Contains<T>())
-            {
-                std::cerr << "组件已存在: " << Object::GetTypeName<T>() << std::endl;
-                return Get<T>().value();
-            }
-
+            // 非单例组件允许重复添加
             // 先添加依赖组件
             AddComponentDependencies<T>();
 
             auto component = std::make_shared<T>(std::forward<Args>(args)...);
             component->SetOwner(ownerEntity);
-            entities.emplace(typeIndex, component);
+            entities[typeIndex].push_back(component);
             allComponents.push_back(component);
             return *component;
         }
@@ -813,7 +719,7 @@ namespace RTTM
             auto fromTypeIndex = std::type_index(typeid(FromComponent));
             auto toTypeIndex = std::type_index(typeid(ToComponent));
 
-            // 查找要替换的组件
+            // 查找要替换的组件（第一个）
             std::shared_ptr<ComponentBase> oldComponent;
             std::type_index actualFromTypeIndex = fromTypeIndex;
 
@@ -824,18 +730,18 @@ namespace RTTM
             {
                 actualFromTypeIndex = foundTypeIndex.value();
                 auto foundIt = entities.find(actualFromTypeIndex);
-                if (foundIt != entities.end())
+                if (foundIt != entities.end() && !foundIt->second.empty())
                 {
-                    oldComponent = foundIt->second;
+                    oldComponent = foundIt->second[0]; // 获取第一个组件
                 }
             }
             else
             {
                 // 直接查找
                 auto fromIt = entities.find(fromTypeIndex);
-                if (fromIt != entities.end())
+                if (fromIt != entities.end() && !fromIt->second.empty())
                 {
-                    oldComponent = fromIt->second;
+                    oldComponent = fromIt->second[0]; // 获取第一个组件
                     actualFromTypeIndex = fromTypeIndex;
                 }
             }
@@ -886,7 +792,7 @@ namespace RTTM
             RemoveComponentFromContainers(oldComponent, actualFromTypeIndex);
 
             // 添加新组件到容器
-            entities.emplace(toTypeIndex, newComponent);
+            entities[toTypeIndex].push_back(newComponent);
             allComponents.push_back(newComponent);
 
             // 更新单例组件映射（如果新组件是单例组件）
@@ -902,7 +808,7 @@ namespace RTTM
             return *newComponent;
         }
 
-        // 通用组件替换功能
+        // 通用组件替换功能（使用已有实例）
         template <typename FromComponent, typename ToComponent>
         ToComponent& SwapComponent(std::shared_ptr<ToComponent> newComponentInstance)
         {
@@ -927,7 +833,7 @@ namespace RTTM
             auto fromTypeIndex = std::type_index(typeid(FromComponent));
             auto toTypeIndex = std::type_index(typeid(ToComponent));
 
-            // 查找要替换的组件
+            // 查找要替换的组件（第一个）
             std::shared_ptr<ComponentBase> oldComponent;
             std::type_index actualFromTypeIndex = fromTypeIndex;
 
@@ -938,18 +844,18 @@ namespace RTTM
             {
                 actualFromTypeIndex = foundTypeIndex.value();
                 auto foundIt = entities.find(actualFromTypeIndex);
-                if (foundIt != entities.end())
+                if (foundIt != entities.end() && !foundIt->second.empty())
                 {
-                    oldComponent = foundIt->second;
+                    oldComponent = foundIt->second[0]; // 获取第一个组件
                 }
             }
             else
             {
                 // 直接查找
                 auto fromIt = entities.find(fromTypeIndex);
-                if (fromIt != entities.end())
+                if (fromIt != entities.end() && !fromIt->second.empty())
                 {
-                    oldComponent = fromIt->second;
+                    oldComponent = fromIt->second[0]; // 获取第一个组件
                     actualFromTypeIndex = fromTypeIndex;
                 }
             }
@@ -991,7 +897,7 @@ namespace RTTM
             RemoveComponentFromContainers(oldComponent, actualFromTypeIndex);
 
             // 添加新组件到容器
-            entities.emplace(toTypeIndex, newComponentInstance);
+            entities[toTypeIndex].push_back(newComponentInstance);
             allComponents.push_back(newComponentInstance);
 
             // 更新单例组件映射
@@ -1027,17 +933,17 @@ namespace RTTM
             return Emplace<T>(std::forward<Args>(args)...);
         }
 
-        // 精确类型获取
+        // 精确类型获取 - 返回第一个满足条件的组件
         template <typename T>
         std::optional<std::reference_wrapper<T>> Get()
         {
             const auto& typeIndex = std::type_index(typeid(T));
             auto it = entities.find(typeIndex);
-            if (it == entities.end())
+            if (it == entities.end() || it->second.empty())
             {
                 return std::nullopt;
             }
-            auto ptr = std::static_pointer_cast<T>(it->second);
+            auto ptr = std::static_pointer_cast<T>(it->second[0]); // 返回第一个组件
             if (!ptr)
             {
                 return std::nullopt;
@@ -1045,7 +951,7 @@ namespace RTTM
             return *ptr;
         }
 
-        // 动态类型获取
+        // 动态类型获取 - 返回第一个满足条件的组件
         template <typename T>
         std::optional<std::reference_wrapper<T>> GetDynamic()
         {
@@ -1058,7 +964,7 @@ namespace RTTM
                 return exact;
             }
 
-            // 遍历所有组件查找继承关系
+            // 遍历所有组件查找继承关系，返回第一个找到的
             for (auto& component : allComponents)
             {
                 if (auto derived = dynamic_cast<T*>(component.get()))
@@ -1078,11 +984,30 @@ namespace RTTM
 
             std::vector<std::reference_wrapper<T>> results;
 
+            // 首先从精确类型匹配的组件中收集
+            const auto& typeIndex = std::type_index(typeid(T));
+            auto it = entities.find(typeIndex);
+            if (it != entities.end())
+            {
+                for (auto& component : it->second)
+                {
+                    if (auto derived = std::static_pointer_cast<T>(component))
+                    {
+                        results.emplace_back(*derived);
+                    }
+                }
+            }
+
+            // 然后从所有组件中通过动态类型转换收集继承关系的组件
             for (auto& component : allComponents)
             {
                 if (auto derived = dynamic_cast<T*>(component.get()))
                 {
-                    results.emplace_back(*derived);
+                    // 避免重复添加（已经在精确匹配中添加过的）
+                    if (component->GetTypeIndex() != typeIndex)
+                    {
+                        results.emplace_back(*derived);
+                    }
                 }
             }
 
@@ -1092,7 +1017,8 @@ namespace RTTM
         template <typename T>
         bool Contains()
         {
-            return entities.find(std::type_index(typeid(T))) != entities.end();
+            auto it = entities.find(std::type_index(typeid(T)));
+            return it != entities.end() && !it->second.empty();
         }
 
         // 检查是否包含指定类型
@@ -1119,17 +1045,18 @@ namespace RTTM
             return false;
         }
 
+        // 移除第一个指定类型的组件（与Get方法保持相同逻辑）
         template <typename T>
         void Remove()
         {
             auto typeIndex = std::type_index(typeid(T));
             auto it = entities.find(typeIndex);
-            if (it == entities.end())
+            if (it == entities.end() || it->second.empty())
             {
                 return; // 组件不存在
             }
 
-            auto componentToRemove = it->second;
+            auto componentToRemove = it->second[0]; // 移除第一个组件
 
             // 检查删除后是否会违反必需组件约束
             if (!CanRemoveComponent(componentToRemove))
@@ -1143,6 +1070,46 @@ namespace RTTM
             RemoveComponentFromContainers(componentToRemove, typeIndex);
 
             std::cout << "成功删除组件: " << componentToRemove->GetTypeName() << std::endl;
+        }
+
+        // 移除指定的组件实例
+        template <typename T>
+        bool RemoveComponent(const T& componentToRemove)
+        {
+            static_assert(std::is_base_of_v<ComponentBase, T>, "类型必须继承自ComponentBase基类");
+
+            auto typeIndex = std::type_index(typeid(T));
+            auto it = entities.find(typeIndex);
+            if (it == entities.end())
+            {
+                return false; // 类型不存在
+            }
+
+            // 查找具体的组件实例
+            auto& componentList = it->second;
+            for (auto iter = componentList.begin(); iter != componentList.end(); ++iter)
+            {
+                if (iter->get() == &componentToRemove)
+                {
+                    auto component = *iter;
+
+                    // 检查删除后是否会违反必需组件约束
+                    if (!CanRemoveComponent(component))
+                    {
+                        std::cerr << "警告: 无法删除组件 " << component->GetTypeName()
+                            << "，因为它是必需组件的最后一个实现" << std::endl;
+                        return false;
+                    }
+
+                    // 执行删除
+                    RemoveComponentFromContainers(component, typeIndex);
+
+                    std::cout << "成功删除指定组件实例: " << component->GetTypeName() << std::endl;
+                    return true;
+                }
+            }
+
+            return false; // 没有找到指定的组件实例
         }
 
         // 移除指定类型的所有组件
@@ -1180,6 +1147,8 @@ namespace RTTM
                 std::type_index componentTypeIndex = component->GetTypeIndex();
                 RemoveComponentFromContainers(component, componentTypeIndex);
             }
+
+            std::cout << "成功删除所有 " << Object::GetTypeName<T>() << " 类型的组件" << std::endl;
         }
 
         // 验证所有必需组件是否存在
@@ -1236,7 +1205,21 @@ namespace RTTM
             );
 
             // 从实体映射中移除
-            entities.erase(typeIndex);
+            auto it = entities.find(typeIndex);
+            if (it != entities.end())
+            {
+                auto& componentList = it->second;
+                componentList.erase(
+                    std::remove(componentList.begin(), componentList.end(), component),
+                    componentList.end()
+                );
+
+                // 如果列表为空，删除该类型的条目
+                if (componentList.empty())
+                {
+                    entities.erase(it);
+                }
+            }
         }
 
         // 检查组件是否实现了必需的类型
@@ -1285,7 +1268,7 @@ namespace RTTM
         {
             // 检查组件是否已存在
             auto it = entities.find(typeIndex);
-            if (it != entities.end())
+            if (it != entities.end() && !it->second.empty())
             {
                 return; // 组件已存在，无需重复添加
             }
@@ -1326,7 +1309,7 @@ namespace RTTM
             }
 
             // 添加到实体注册表
-            entities.emplace(typeIndex, component);
+            entities[typeIndex].push_back(component);
             allComponents.push_back(component);
 
             // 递归添加此组件的依赖
@@ -1346,17 +1329,14 @@ namespace RTTM
     {
     private:
         RTTM::Registry registry;
-        UUID entityID;
 
     public:
         Entity() : registry(this)
         {
-            entityID = UUID::New();
         }
 
         virtual ~Entity() = default;
 
-        UUID GetEntityID() const { return entityID; }
 
         // 精确类型检查
         template <typename T>
@@ -1366,7 +1346,7 @@ namespace RTTM
         template <typename T>
         bool HasComponentDynamic() { return registry.ContainsDynamic<T>(); }
 
-        // 精确类型获取
+        // 精确类型获取 - 返回第一个满足条件的组件
         template <typename T>
         T& GetComponent()
         {
@@ -1381,7 +1361,7 @@ namespace RTTM
             return result.value();
         }
 
-        // 动态类型获取
+        // 动态类型获取 - 返回第一个满足条件的组件
         template <typename T>
         T& GetComponentDynamic()
         {
@@ -1396,14 +1376,14 @@ namespace RTTM
             return result.value();
         }
 
-        // 尝试获取组件
+        // 尝试获取组件 - 返回第一个满足条件的组件
         template <typename T>
         std::optional<std::reference_wrapper<T>> TryGetComponent()
         {
             return registry.GetDynamic<T>();
         }
 
-        // 获取所有指定类型的组件
+        // 获取所有指定类型的组件 - 返回std::vector<std::reference_wrapper<T>>
         template <typename T>
         std::vector<std::reference_wrapper<T>> GetComponents()
         {
@@ -1433,17 +1413,25 @@ namespace RTTM
             return registry.SwapComponent<FromComponent, ToComponent>(std::forward<Args>(args)...);
         }
 
-        // 组件替换功能
+        // 组件替换功能（使用已有实例）
         template <typename FromComponent, typename ToComponent>
         ToComponent& SwapComponent(std::shared_ptr<ToComponent> newComponentInstance)
         {
             return registry.SwapComponent<FromComponent, ToComponent>(newComponentInstance);
         }
 
+        // 移除第一个指定类型的组件（与GetComponent保持相同逻辑）
         template <typename T>
         void RemoveComponent()
         {
             registry.Remove<T>();
+        }
+
+        // 移除指定的组件实例
+        template <typename T>
+        bool RemoveComponent(const T& component)
+        {
+            return registry.RemoveComponent<T>(component);
         }
 
         // 移除所有指定类型的组件（包括继承的子类）
@@ -1562,26 +1550,6 @@ namespace RTTM
 #define COMPONENT_DEPENDENCIES(...) \
 std::vector<std::type_index> GetDependencies() const override { \
 return __getDependencies<__VA_ARGS__>(); \
-}
-
-namespace std
-{
-    template <>
-    struct hash<RTTM::UUID>
-    {
-        size_t operator()(const RTTM::UUID& uuid) const noexcept
-        {
-            const auto& data = uuid.GetData();
-            // 组合四个32位整数到哈希值
-            size_t hash = 0;
-            for (uint32_t val : data)
-            {
-                // 使用Boost风格的哈希组合（避免冲突）
-                hash ^= std::hash<uint32_t>{}(val) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            }
-            return hash;
-        }
-    };
 }
 
 #endif // RTTMENTITY_H
