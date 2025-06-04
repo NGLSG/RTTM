@@ -179,268 +179,150 @@ std::string greeting = personType->Invoke<std::string>("greeting");
 ```cpp
 #include "RTTM/Entity.hpp"
 #include <iostream>
-#include <vector>
-#include <memory>
 
-// 基础组件定义
-class Transform : public RTTM::Component
+// 数据组件
+class Health : public RTTM::Component<Health>
 {
 public:
-    float x = 0.0f, y = 0.0f;
-    float rotation = 0.0f;
+    int hp = 100;
 
-    Transform(float x = 0, float y = 0) : x(x), y(y) {}
-
-    void Move(float dx, float dy) { x += dx; y += dy; }
-
-    std::string GetTypeName() const override { return "Transform"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Transform)); }
-};
-
-class Health : public RTTM::Component
-{
-public:
-    int maxHP = 100;
-    int currentHP = 100;
-
-    Health(int hp = 100) : maxHP(hp), currentHP(hp) {}
-
-    void TakeDamage(int damage)
+    Health(int h = 100) : hp(h)
     {
-        currentHP -= damage;
-        if (currentHP < 0) currentHP = 0;
     }
-
-    bool IsAlive() const { return currentHP > 0; }
 
     std::string GetTypeName() const override { return "Health"; }
     std::type_index GetTypeIndex() const override { return std::type_index(typeid(Health)); }
 };
 
-// 渲染器基类
-class Renderer : public RTTM::Component
+// 纯虚单例组件 - 不能直接实例化
+class WeaponSystem : public RTTM::SingletonComponent<WeaponSystem>
 {
 public:
-    bool visible = true;
-    virtual void Render() = 0;
-
-    std::string GetTypeName() const override { return "Renderer"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Renderer)); }
-};
-
-class SpriteRenderer : public Renderer
-{
-public:
-    std::string sprite;
-
-    SpriteRenderer(const std::string& s) : sprite(s) {}
-
-    void Render() override
-    {
-        std::cout << "渲染精灵: " << sprite << std::endl;
-    }
-
-    std::string GetTypeName() const override { return "SpriteRenderer"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(SpriteRenderer)); }
-};
-
-// 武器组件
-class Weapon : public RTTM::Component
-{
-public:
+    COMPONENT_DEPENDENCIES(Health) // 依赖声明
     int damage = 10;
-    std::string weaponType;
+    virtual void Attack() = 0; // 纯虚函数，子类必须实现
+    std::string GetTypeName() const override { return "WeaponSystem"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(WeaponSystem)); }
+};
 
-    Weapon(const std::string& type, int dmg) : weaponType(type), damage(dmg) {}
+// 具体武器实现
+class Sword : public WeaponSystem
+{
+public:
+    Sword() { damage = 30; }
+    void Attack() override { std::cout << "剑击！伤害:" << damage << std::endl; }
+    std::string GetTypeName() const override { return "Sword"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Sword)); }
+};
 
+class Gun : public WeaponSystem
+{
+public:
+    Gun() { damage = 20; }
+    void Attack() override { std::cout << "射击！伤害:" << damage << std::endl; }
+    std::string GetTypeName() const override { return "Gun"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Gun)); }
+};
+
+// 战士实体
+class Fighter : REQUIRE_COMPONENTS(WeaponSystem)
+{
+public:
     void Attack()
     {
-        std::cout << "使用 " << weaponType << " 攻击，造成 " << damage << " 点伤害！" << std::endl;
-    }
-
-    std::string GetTypeName() const override { return "Weapon"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Weapon)); }
-};
-
-// 特殊实体类 - 战士
-class Warrior : public RTTM::Entity
-{
-public:
-    Warrior(float x, float y)
-    {
-        AddComponent<Transform>(x, y);
-        AddComponent<Health>(150);  // 战士血量更多
-        AddComponent<SpriteRenderer>("战士精灵");
-        AddComponent<Weapon>("长剑", 25);
-    }
-
-    void Attack(RTTM::Entity& target)
-    {
-        auto& weapon = GetComponent<Weapon>();
-        weapon.Attack();
-
-        // 如果目标有血量组件，造成伤害
-        if (target.HasComponent<Health>())
+        try
         {
-            auto& targetHealth = target.GetComponent<Health>();
-            targetHealth.TakeDamage(weapon.damage);
-            std::cout << "目标剩余血量: " << targetHealth.currentHP << std::endl;
+            GetComponentDynamic<WeaponSystem>().Attack();
         }
-    }
-};
-
-// 需要特定组件的法师类
-class Mage : REQUIRE_COMPONENTS(Transform, Health)
-{
-public:
-    int mana = 100;
-
-    Mage(float x, float y) : mana(100)
-    {
-        // Transform和Health会自动添加
-        AddComponent<SpriteRenderer>("法师精灵");
-
-        // 设置法师的属性
-        GetComponent<Health>().maxHP = 80;  // 法师血量较少
-        GetComponent<Health>().currentHP = 80;
-    }
-
-    void CastSpell(RTTM::Entity& target)
-    {
-        if (mana >= 20)
+        catch (const std::exception& e)
         {
-            mana -= 20;
-            std::cout << "法师施放火球术！消耗20魔法值" << std::endl;
-
-            if (target.HasComponent<Health>())
-            {
-                auto& targetHealth = target.GetComponent<Health>();
-                targetHealth.TakeDamage(30);
-                std::cout << "火球术造成30点魔法伤害！目标剩余血量: " << targetHealth.currentHP << std::endl;
-            }
-        }
-        else
-        {
-            std::cout << "魔法值不足！" << std::endl;
-        }
-    }
-};
-
-// 游戏系统类
-class GameSystem
-{
-public:
-    // 移动系统 - 处理所有有Transform的实体
-    static void UpdateMovement(std::vector<std::unique_ptr<RTTM::Entity>>& entities, float deltaTime)
-    {
-        std::cout << "\n=== 移动系统更新 ===" << std::endl;
-        for (auto& entity : entities)
-        {
-            if (entity->HasComponent<Transform>())
-            {
-                auto& transform = entity->GetComponent<Transform>();
-                // 简单的移动逻辑
-                transform.Move(1.0f * deltaTime, 0.5f * deltaTime);
-                std::cout << "实体移动到: (" << transform.x << ", " << transform.y << ")" << std::endl;
-            }
+            std::cout << "攻击失败: " << e.what() << std::endl;
         }
     }
 
-    // 渲染系统 - 处理所有有渲染器的实体
-    static void Render(std::vector<std::unique_ptr<RTTM::Entity>>& entities)
+    template <typename T>
+    void ChangeWeapon()
     {
-        std::cout << "\n=== 渲染系统更新 ===" << std::endl;
-        for (auto& entity : entities)
+        try
         {
-            // 使用动态类型查找，支持继承关系
-            if (entity->HasComponentDynamic<Renderer>())
-            {
-                auto& renderer = entity->GetComponentDynamic<Renderer>();
-                if (renderer.visible)
-                {
-                    renderer.Render();
-                }
-            }
+            SwapComponent<WeaponSystem, T>();
+            std::cout << "换武器为:" << GetComponentDynamic<WeaponSystem>().GetTypeName() << std::endl;
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "换武器失败: " << e.what() << std::endl;
         }
     }
 
-    // 生命值显示系统
-    static void ShowHealthStatus(std::vector<std::unique_ptr<RTTM::Entity>>& entities)
+    void ShowInfo()
     {
-        std::cout << "\n=== 生命值状态 ===" << std::endl;
-        for (auto& entity : entities)
+        try
         {
-            if (entity->HasComponent<Health>())
-            {
-                auto& health = entity->GetComponent<Health>();
-                std::cout << "实体生命值: " << health.currentHP << "/" << health.maxHP;
-                if (!health.IsAlive())
-                {
-                    std::cout << " (已死亡)";
-                }
-                std::cout << std::endl;
-            }
+            auto& h = GetComponent<Health>();
+            auto& w = GetComponentDynamic<WeaponSystem>();
+            std::cout << "血量:" << h.hp << " 武器:" << w.GetTypeName() << std::endl;
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "显示信息失败: " << e.what() << std::endl;
         }
     }
 };
 
 int main()
 {
-    std::cout << "=== ECS 游戏系统演示 ===" << std::endl;
+    std::cout << "=== RTTM ECS 演示 ===" << std::endl;
 
-    // 创建游戏实体
-    std::vector<std::unique_ptr<RTTM::Entity>> gameEntities;
+    // 特性1: 正常的实体创建与组件添加
+    std::cout << "\n1. 正常实体创建:" << std::endl;
+    Fighter player;
+    player.AddComponent<Health>(80);
+    player.AddComponent<Sword>();
 
-    // 创建战士
-    auto warrior = std::make_unique<Warrior>(10.0f, 20.0f);
+    // 特性2: 组件检测
+    std::cout << "\n2. 组件检测:" << std::endl;
+    std::cout << "有生命值:" << (player.HasComponent<Health>() ? "是" : "否") << std::endl;
+    std::cout << "有武器:" << (player.HasComponentDynamic<WeaponSystem>() ? "是" : "否") << std::endl;
 
-    // 创建法师（会自动添加必需组件）
-    auto mage = std::make_unique<Mage>(5.0f, 15.0f);
+    // 特性3: 组件使用
+    std::cout << "\n3. 组件使用:" << std::endl;
+    player.ShowInfo();
+    player.Attack();
 
-    std::cout << "\n=== 验证组件自动添加 ===" << std::endl;
-    std::cout << "法师有Transform组件: " << mage->HasComponent<Transform>() << std::endl;
-    std::cout << "法师有Health组件: " << mage->HasComponent<Health>() << std::endl;
+    // 特性4: 单例组件替换
+    std::cout << "\n4. 组件替换:" << std::endl;
+    player.ChangeWeapon<Gun>();
+    player.Attack();
 
-    // 展示多态特性
-    std::cout << "\n=== 多态组件查找 ===" << std::endl;
-    std::cout << "战士有渲染器(动态查找): " << warrior->HasComponentDynamic<Renderer>() << std::endl;
-    std::cout << "法师有渲染器(动态查找): " << mage->HasComponentDynamic<Renderer>() << std::endl;
+    // 特性5: 自动依赖处理
+    std::cout << "\n5. 自动依赖处理:" << std::endl;
+    Fighter newPlayer;
+    newPlayer.AddComponent<Gun>(); // 自动添加Health依赖
+    std::cout << "新玩家自动有生命值:" << (newPlayer.HasComponent<Health>() ? "是" : "否") << std::endl;
+    newPlayer.ShowInfo();
 
-    gameEntities.push_back(std::move(warrior));
-    gameEntities.push_back(std::move(mage));
-
-    // 获取引用用于战斗演示
-    Warrior* warriorPtr = static_cast<Warrior*>(gameEntities[0].get());
-    Mage* magePtr = static_cast<Mage*>(gameEntities[1].get());
-
-    // 游戏循环模拟
-    std::cout << "\n=== 游戏开始 ===" << std::endl;
-
-    // 初始状态
-    GameSystem::ShowHealthStatus(gameEntities);
-    GameSystem::Render(gameEntities);
-
-    // 战斗回合1
-    std::cout << "\n=== 战斗回合1 ===" << std::endl;
-    warriorPtr->Attack(*magePtr);
-    magePtr->CastSpell(*warriorPtr);
-
-    // 移动和渲染
-    GameSystem::UpdateMovement(gameEntities, 1.0f);
-    GameSystem::ShowHealthStatus(gameEntities);
-
-    // 战斗回合2
-    std::cout << "\n=== 战斗回合2 ===" << std::endl;
-    magePtr->CastSpell(*warriorPtr);
-    warriorPtr->Attack(*magePtr);
-
-    GameSystem::ShowHealthStatus(gameEntities);
-    GameSystem::Render(gameEntities);
-
-    std::cout << "\n=== 游戏结束 ===" << std::endl;
+    // 特性6: 错误处理演示
+    std::cout << "\n6. 错误处理:" << std::endl;
+    try
+    {
+        //由于WeaponSystem是纯虚类，不能直接实例化,需要手动添加具体实现
+        Fighter errorPlayer;
+        //错误: errorPlayer.AddComponent<WeaponSystem>(); // 这行会编译失败，因为WeaponSystem是纯虚类
+        errorPlayer.Attack();
+        std::cout << "将会输出错误信息，因为WeaponSystem是纯虚类，不能自动添加,实体缺乏组件" << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << "错误处理捕获: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cout << "未知错误被捕获" << std::endl;
+    }
 
     return 0;
 }
+
 ```
 
 ## 🔄 自动化注册

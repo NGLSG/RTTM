@@ -180,280 +180,153 @@ std::string greeting = personType->Invoke<std::string>("greeting");
 ```cpp
 #include "RTTM/Entity.hpp"
 #include <iostream>
-#include <vector>
-#include <memory>
 
-// Base component definitions
-class Transform : public RTTM::Component
+// Data Component
+class Health : public RTTM::Component<Health>
 {
 public:
-    float x = 0.0f, y = 0.0f;
-    float rotation = 0.0f;
+    int hp = 100;
 
-    Transform(float x = 0, float y = 0) : x(x), y(y)
+    Health(int h = 100) : hp(h)
     {
     }
-
-    void Move(float dx, float dy)
-    {
-        x += dx;
-        y += dy;
-    }
-
-    std::string GetTypeName() const override { return "Transform"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Transform)); }
-};
-
-class Health : public RTTM::Component
-{
-public:
-    int maxHP = 100;
-    int currentHP = 100;
-
-    Health(int hp = 100) : maxHP(hp), currentHP(hp)
-    {
-    }
-
-    void TakeDamage(int damage)
-    {
-        currentHP -= damage;
-        if (currentHP < 0) currentHP = 0;
-    }
-
-    bool IsAlive() const { return currentHP > 0; }
 
     std::string GetTypeName() const override { return "Health"; }
     std::type_index GetTypeIndex() const override { return std::type_index(typeid(Health)); }
 };
 
-// Base renderer class
-class Renderer : public RTTM::Component
+// Pure Virtual Singleton Component - Cannot be instantiated directly
+class WeaponSystem : public RTTM::SingletonComponent<WeaponSystem>
 {
 public:
-    bool visible = true;
-    virtual void Render() = 0;
-
-    std::string GetTypeName() const override { return "Renderer"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Renderer)); }
-};
-
-class SpriteRenderer : public Renderer
-{
-public:
-    std::string sprite;
-
-    SpriteRenderer(const std::string& s) : sprite(s)
-    {
-    }
-
-    void Render() override
-    {
-        std::cout << "Rendering sprite: " << sprite << std::endl;
-    }
-
-    std::string GetTypeName() const override { return "SpriteRenderer"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(SpriteRenderer)); }
-};
-
-// Weapon component
-class Weapon : public RTTM::Component
-{
-public:
+    COMPONENT_DEPENDENCIES(Health) // Dependency declaration
     int damage = 10;
-    std::string weaponType;
+    virtual void Attack() = 0; // Pure virtual function, must be implemented by subclasses
+    std::string GetTypeName() const override { return "WeaponSystem"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(WeaponSystem)); }
+};
 
-    Weapon(const std::string& type, int dmg) : weaponType(type), damage(dmg)
-    {
-    }
+// Concrete weapon implementation
+class Sword : public WeaponSystem
+{
+public:
+    Sword() { damage = 30; }
+    void Attack() override { std::cout << "Sword Slash! Damage:" << damage << std::endl; }
+    std::string GetTypeName() const override { return "Sword"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Sword)); }
+};
 
+class Gun : public WeaponSystem
+{
+public:
+    Gun() { damage = 20; }
+    void Attack() override { std::cout << "Gun Shot! Damage:" << damage << std::endl; }
+    std::string GetTypeName() const override { return "Gun"; }
+    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Gun)); }
+};
+
+// Fighter entity
+class Fighter : REQUIRE_COMPONENTS(WeaponSystem)
+{
+public:
     void Attack()
     {
-        std::cout << "Attacking with " << weaponType << ", dealing " << damage << " damage!" << std::endl;
-    }
-
-    std::string GetTypeName() const override { return "Weapon"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Weapon)); }
-};
-
-// Special entity class - Warrior
-class Warrior : public RTTM::Entity
-{
-public:
-    Warrior(float x, float y)
-    {
-        AddComponent<Transform>(x, y);
-        AddComponent<Health>(150); // Warrior has more HP
-        AddComponent<SpriteRenderer>("WarriorSprite");
-        AddComponent<Weapon>("Longsword", 25);
-    }
-
-    void Attack(RTTM::Entity& target)
-    {
-        auto& weapon = GetComponent<Weapon>();
-        weapon.Attack();
-
-        // If target has Health component, deal damage
-        if (target.HasComponent<Health>())
+        try
         {
-            auto& targetHealth = target.GetComponent<Health>();
-            targetHealth.TakeDamage(weapon.damage);
-            std::cout << "Target's remaining HP: " << targetHealth.currentHP << std::endl;
+            GetComponentDynamic<WeaponSystem>().Attack();
         }
-    }
-};
-
-// Mage class requiring specific components
-class Mage : REQUIRE_COMPONENTS(Transform, Health)
-{
-public:
-    int mana = 100;
-
-    Mage(float x, float y) : mana(100)
-    {
-        // Transform and Health are automatically added
-        AddComponent<SpriteRenderer>("MageSprite");
-
-        // Set mage attributes
-        GetComponent<Health>().maxHP = 80; // Mage has less HP
-        GetComponent<Health>().currentHP = 80;
-    }
-
-    void CastSpell(RTTM::Entity& target)
-    {
-        if (mana >= 20)
+        catch (const std::exception& e)
         {
-            mana -= 20;
-            std::cout << "Mage casts Fireball! Consumes 20 mana" << std::endl;
-
-            if (target.HasComponent<Health>())
-            {
-                auto& targetHealth = target.GetComponent<Health>();
-                targetHealth.TakeDamage(30);
-                std::cout << "Fireball deals 30 magic damage! Target's remaining HP: " << targetHealth.currentHP << std::endl;
-            }
-        }
-        else
-        {
-            std::cout << "Not enough mana!" << std::endl;
-        }
-    }
-};
-
-// Game system class
-class GameSystem
-{
-public:
-    // Movement system - processes all entities with Transform
-    static void UpdateMovement(std::vector<std::unique_ptr<RTTM::Entity>>& entities, float deltaTime)
-    {
-        std::cout << "\n=== Movement System Update ===" << std::endl;
-        for (auto& entity : entities)
-        {
-            if (entity->HasComponent<Transform>())
-            {
-                auto& transform = entity->GetComponent<Transform>();
-                // Simple movement logic
-                transform.Move(1.0f * deltaTime, 0.5f * deltaTime);
-                std::cout << "Entity moved to: (" << transform.x << ", " << transform.y << ")" << std::endl;
-            }
+            std::cout << "Attack failed: " << e.what() << std::endl;
         }
     }
 
-    // Rendering system - processes all entities with renderers
-    static void Render(std::vector<std::unique_ptr<RTTM::Entity>>& entities)
+    template <typename T>
+    void ChangeWeapon()
     {
-        std::cout << "\n=== Rendering System Update ===" << std::endl;
-        for (auto& entity : entities)
+        try
         {
-            // Using dynamic type lookup to support inheritance
-            if (entity->HasComponentDynamic<Renderer>())
-            {
-                auto& renderer = entity->GetComponentDynamic<Renderer>();
-                if (renderer.visible)
-                {
-                    renderer.Render();
-                }
-            }
+            SwapComponent<WeaponSystem, T>();
+            std::cout << "Weapon changed to:" << GetComponentDynamic<WeaponSystem>().GetTypeName() << std::endl;
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "Weapon change failed: " << e.what() << std::endl;
         }
     }
 
-    // Health display system
-    static void ShowHealthStatus(std::vector<std::unique_ptr<RTTM::Entity>>& entities)
+    void ShowInfo()
     {
-        std::cout << "\n=== Health Status ===" << std::endl;
-        for (auto& entity : entities)
+        try
         {
-            if (entity->HasComponent<Health>())
-            {
-                auto& health = entity->GetComponent<Health>();
-                std::cout << "Entity HP: " << health.currentHP << "/" << health.maxHP;
-                if (!health.IsAlive())
-                {
-                    std::cout << " (DEAD)";
-                }
-                std::cout << std::endl;
-            }
+            auto& h = GetComponent<Health>();
+            auto& w = GetComponentDynamic<WeaponSystem>();
+            std::cout << "HP:" << h.hp << " Weapon:" << w.GetTypeName() << std::endl;
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "Failed to display info: " << e.what() << std::endl;
         }
     }
 };
 
 int main()
 {
-    std::cout << "=== ECS Game System Demo ===" << std::endl;
+    std::cout << "=== RTTM ECS Demo ===" << std::endl;
 
-    // Create game entities
-    std::vector<std::unique_ptr<RTTM::Entity>> gameEntities;
+    // Feature 1: Normal entity creation and component addition
+    std::cout << "\n1. Normal entity creation:" << std::endl;
+    Fighter player;
+    player.AddComponent<Health>(80);
+    player.AddComponent<Sword>();
 
-    // Create warrior
-    auto warrior = std::make_unique<Warrior>(10.0f, 20.0f);
+    // Feature 2: Component detection
+    std::cout << "\n2. Component detection:" << std::endl;
+    std::cout << "Has Health:" << (player.HasComponent<Health>() ? "Yes" : "No") << std::endl;
+    std::cout << "Has Weapon:" << (player.HasComponentDynamic<WeaponSystem>() ? "Yes" : "No") << std::endl;
 
-    // Create mage (required components are automatically added)
-    auto mage = std::make_unique<Mage>(5.0f, 15.0f);
+    // Feature 3: Component usage
+    std::cout << "\n3. Component usage:" << std::endl;
+    player.ShowInfo();
+    player.Attack();
 
-    std::cout << "\n=== Verifying Automatic Component Addition ===" << std::endl;
-    std::cout << "Mage has Transform component: " << mage->HasComponent<Transform>() << std::endl;
-    std::cout << "Mage has Health component: " << mage->HasComponent<Health>() << std::endl;
+    // Feature 4: Singleton component replacement
+    std::cout << "\n4. Component replacement:" << std::endl;
+    player.ChangeWeapon<Gun>();
+    player.Attack();
 
-    // Demonstrate polymorphism
-    std::cout << "\n=== Polymorphic Component Lookup ===" << std::endl;
-    std::cout << "Warrior has renderer (dynamic lookup): " << warrior->HasComponentDynamic<Renderer>() << std::endl;
-    std::cout << "Mage has renderer (dynamic lookup): " << mage->HasComponentDynamic<Renderer>() << std::endl;
+    // Feature 5: Automatic dependency handling
+    std::cout << "\n5. Automatic dependency handling:" << std::endl;
+    Fighter newPlayer;
+    newPlayer.AddComponent<Gun>(); // Automatically adds Health dependency
+    std::cout << "New player automatically has Health:" << (newPlayer.HasComponent<Health>() ? "Yes" : "No") <<
+        std::endl;
+    newPlayer.ShowInfo();
 
-    gameEntities.push_back(std::move(warrior));
-    gameEntities.push_back(std::move(mage));
-
-    // Get references for combat demo
-    Warrior* warriorPtr = static_cast<Warrior*>(gameEntities[0].get());
-    Mage* magePtr = static_cast<Mage*>(gameEntities[1].get());
-
-    // Simulate game loop
-    std::cout << "\n=== Game Start ===" << std::endl;
-
-    // Initial state
-    GameSystem::ShowHealthStatus(gameEntities);
-    GameSystem::Render(gameEntities);
-
-    // Combat round 1
-    std::cout << "\n=== Combat Round 1 ===" << std::endl;
-    warriorPtr->Attack(*magePtr);
-    magePtr->CastSpell(*warriorPtr);
-
-    // Movement and rendering
-    GameSystem::UpdateMovement(gameEntities, 1.0f);
-    GameSystem::ShowHealthStatus(gameEntities);
-
-    // Combat round 2
-    std::cout << "\n=== Combat Round 2 ===" << std::endl;
-    magePtr->CastSpell(*warriorPtr);
-    warriorPtr->Attack(*magePtr);
-
-    GameSystem::ShowHealthStatus(gameEntities);
-    GameSystem::Render(gameEntities);
-
-    std::cout << "\n=== Game Over ===" << std::endl;
+    // Feature 6: Error handling demonstration
+    std::cout << "\n6. Error handling:" << std::endl;
+    try
+    {
+        // Since WeaponSystem is an abstract class, it cannot be instantiated directly; concrete implementations must be added manually
+        Fighter errorPlayer;
+        // Error: errorPlayer.AddComponent<WeaponSystem>(); // This line would fail to compile because WeaponSystem is abstract
+        errorPlayer.Attack();
+        std::cout <<
+            "This will output an error message because WeaponSystem is abstract and cannot be auto-added; the entity lacks components"
+            << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << "Error caught: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cout << "Unknown error caught" << std::endl;
+    }
 
     return 0;
 }
+
 ```
 
 ## 🔄 Serialization Example
