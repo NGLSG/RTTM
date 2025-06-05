@@ -357,9 +357,6 @@ namespace RTTM
         template <typename T>
         static std::optional<std::type_index> FindSingletonBaseRecursive()
         {
-            // 这里需要手动检查已知的单例基类
-            // 由于C++没有完整的反射，我们需要通过模板特化或其他方式来处理
-
             // 检查是否继承自某个已知的单例基类
             // 这里使用一个简化的实现，实际项目中可能需要更复杂的机制
             return CheckKnownSingletonBases<T>();
@@ -406,9 +403,6 @@ namespace RTTM
         template <typename T>
         static void CollectDirectBaseTypes(std::vector<std::type_index>& baseTypes)
         {
-            // 这里使用一个简化的方法，通过检查类型转换来确定继承关系
-            // 在实际使用中，您可能需要手动注册继承关系或使用更复杂的反射机制
-
             // 检查是否继承自已知的组件基类
             if constexpr (std::is_convertible_v<T*, ComponentBase*>)
             {
@@ -1068,8 +1062,6 @@ namespace RTTM
 
             // 执行删除
             RemoveComponentFromContainers(componentToRemove, typeIndex);
-
-            std::cout << "成功删除组件: " << componentToRemove->GetTypeName() << std::endl;
         }
 
         // 移除指定的组件实例

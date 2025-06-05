@@ -333,7 +333,7 @@ public:
 };
 
 //-------------------------------------------------------
-// RTTM 实现
+// RTTM 实现,自动注册
 //-------------------------------------------------------
 
 // RTTM 序列化函数
@@ -548,7 +548,7 @@ public:
         }
 
         std::cout << " 完成 (" << std::fixed << std::setprecision(2)
-                  << elapsed_ms << "ms)\n";
+            << elapsed_ms << "ms)\n";
     }
 
     void print_comprehensive_results()
@@ -785,12 +785,12 @@ protected:
     }
 
     // 测试参数 - 使用常量表达式避免字面量
-    static constexpr int SERIALIZATION_ITERATIONS = 500000;
-    static constexpr int PROPERTY_ACCESS_ITERATIONS = 5000000;
+    static constexpr int SERIALIZATION_ITERATIONS = 1000000;
+    static constexpr int PROPERTY_ACCESS_ITERATIONS = 10000000;
     static constexpr int TYPE_CREATION_ITERATIONS = 1000000;
     static constexpr int BATCH_SIZE = 1000;
-    static constexpr int BATCH_ITERATIONS = 500;
-    static constexpr int THREAD_COUNT = 4;
+    static constexpr int BATCH_ITERATIONS = 1000;
+    static constexpr int THREAD_COUNT = 16;
     static constexpr int ITERATIONS_PER_THREAD = 100000;
 };
 
@@ -804,10 +804,11 @@ TEST_F(ReflectionLibrariesComparison, 序列化性能对比测试)
 
     json output;
 
-    // RTTR 序列化测试
-    rttr::instance rttr_obj = test_obj;
+
     g_benchmark.run_test("RTTR", "序列化性能", [&]()
     {
+        // RTTR 序列化测试
+        rttr::instance rttr_obj = test_obj;
         for (int i = 0; i < SERIALIZATION_ITERATIONS; ++i)
         {
             output = SerializeRTTR(rttr_obj);
@@ -831,13 +832,13 @@ TEST_F(ReflectionLibrariesComparison, 序列化性能对比测试)
     ASSERT_TRUE(output.contains("A"));
     EXPECT_EQ(output["A"], test_obj.A);
 
-    // RTTM 序列化测试
-    auto rttm_type = RType::Get<JsonSerializable>();
-    rttm_type->Create();
-    rttm_type->As<JsonSerializable>() = test_obj;
 
     g_benchmark.run_test("RTTM", "序列化性能", [&]()
     {
+        // RTTM 序列化测试
+        auto rttm_type = RType::Get<JsonSerializable>();
+        rttm_type->Create();
+        rttm_type->As<JsonSerializable>() = test_obj;
         for (int i = 0; i < SERIALIZATION_ITERATIONS; ++i)
         {
             output = SerializeRTTM(rttm_type);
@@ -861,11 +862,11 @@ TEST_F(ReflectionLibrariesComparison, 反序列化性能对比测试)
     json test_data = HanaSerializer::serialize(test_obj);
 
     // RTTR 反序列化测试
-    JsonSerializable rttr_deser_obj;
-    rttr::instance rttr_deser_instance = rttr_deser_obj;
 
+    JsonSerializable rttr_deser_obj;
     g_benchmark.run_test("RTTR", "反序列化性能", [&]()
     {
+        rttr::instance rttr_deser_instance = rttr_deser_obj;
         for (int i = 0; i < SERIALIZATION_ITERATIONS; ++i)
         {
             DeserializeRTTR(rttr_deser_instance, test_data);
@@ -877,7 +878,6 @@ TEST_F(ReflectionLibrariesComparison, 反序列化性能对比测试)
 
     // Boost.Hana 反序列化测试
     JsonSerializable hana_deser_obj;
-
     g_benchmark.run_test("Hana", "反序列化性能", [&]()
     {
         for (int i = 0; i < SERIALIZATION_ITERATIONS; ++i)
@@ -891,10 +891,9 @@ TEST_F(ReflectionLibrariesComparison, 反序列化性能对比测试)
 
     // RTTM 反序列化测试
     auto rttm_deser_type = RType::Get<JsonSerializable>();
-    rttm_deser_type->Create();
-
     g_benchmark.run_test("RTTM", "反序列化性能", [&]()
     {
+        rttm_deser_type->Create();
         for (int i = 0; i < SERIALIZATION_ITERATIONS; ++i)
         {
             DeserializeRTTM(rttm_deser_type, test_data);
@@ -926,11 +925,12 @@ TEST_F(ReflectionLibrariesComparison, 属性访问性能对比测试)
     }, PROPERTY_ACCESS_ITERATIONS);
 
     // RTTR 属性访问测试
-    rttr::instance rttr_obj = test_obj;
+
     int rttr_sum = 0;
 
     g_benchmark.run_test("RTTR", "属性访问性能", [&]()
     {
+        rttr::instance rttr_obj = test_obj;
         rttr::property prop = rttr::type::get<JsonSerializable>().get_property("A");
         rttr::variant value = prop.get_value(rttr_obj);
         for (int i = 0; i < PROPERTY_ACCESS_ITERATIONS; ++i)
@@ -955,14 +955,14 @@ TEST_F(ReflectionLibrariesComparison, 属性访问性能对比测试)
 
     EXPECT_EQ(sum, hana_sum);
 
-    // RTTM 属性访问测试
-    auto rttm_type = RType::Get<JsonSerializable>();
-    rttm_type->Create();
-    rttm_type->As<JsonSerializable>() = test_obj;
 
     int rttm_sum = 0;
     g_benchmark.run_test("RTTM", "属性访问性能", [&]()
     {
+        // RTTM 属性访问测试
+        auto rttm_type = RType::Get<JsonSerializable>();
+        rttm_type->Create();
+        rttm_type->As<JsonSerializable>() = test_obj;
         auto property_a = rttm_type->GetProperty("A");
         for (int i = 0; i < PROPERTY_ACCESS_ITERATIONS; ++i)
         {
@@ -980,12 +980,12 @@ TEST_F(ReflectionLibrariesComparison, 类型创建性能对比测试)
     std::cout << "执行类型创建性能测试...\n";
 
     // 直接对象创建（基准测试）
-    g_benchmark.run_test("Direct", "类型创建性能", [&]()
+    g_benchmark.run_test("Direct&&Hana", "类型创建性能", [&]()
     {
         for (int i = 0; i < TYPE_CREATION_ITERATIONS; ++i)
         {
-            JsonSerializable obj;
-            initialize_test_data(obj);
+            volatile JsonSerializable obj;
+            (void)obj; // 防止优化掉对象创建
         }
     }, TYPE_CREATION_ITERATIONS);
 
@@ -995,26 +995,17 @@ TEST_F(ReflectionLibrariesComparison, 类型创建性能对比测试)
         auto type = rttr::type::get<JsonSerializable>();
         for (int i = 0; i < TYPE_CREATION_ITERATIONS; ++i)
         {
-            auto instance = type.create();
-        }
-    }, TYPE_CREATION_ITERATIONS);
-
-    // Boost.Hana 对象创建测试（无特殊类型系统）
-    g_benchmark.run_test("Hana", "类型创建性能", [&]()
-    {
-        for (int i = 0; i < TYPE_CREATION_ITERATIONS; ++i)
-        {
-            JsonSerializable obj;
-            initialize_test_data(obj);
+            volatile auto instance = type.create();
+            (void)instance; // 防止优化掉对象创建
         }
     }, TYPE_CREATION_ITERATIONS);
 
     // RTTM 类型创建测试
     g_benchmark.run_test("RTTM", "类型创建性能", [&]()
     {
+        auto type = RType::Get<JsonSerializable>();
         for (int i = 0; i < TYPE_CREATION_ITERATIONS; ++i)
         {
-            auto type = RType::Get<JsonSerializable>();
             type->Create();
         }
     }, TYPE_CREATION_ITERATIONS);
@@ -1201,6 +1192,7 @@ TEST_F(ReflectionLibrariesComparison, 输出综合测试结果)
     std::cout << "\n正在生成综合性能对比报告...\n";
     g_benchmark.print_comprehensive_results();
 }
+
 
 //-------------------------------------------------------
 // 程序入口点
