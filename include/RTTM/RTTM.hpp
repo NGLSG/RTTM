@@ -16,6 +16,29 @@
 
 #include "Function.hpp"
 
+template <typename T>
+struct is_streamable
+{
+private:
+    template <typename U>
+    static auto test(int) -> decltype(std::declval<std::ostream&>() << std::declval<U>(), std::true_type{});
+
+    template <typename U>
+    static std::false_type test(...);
+
+public:
+    static constexpr bool value = decltype(test<T>(0))::value;
+};
+
+#define RTTM_DEBUG(...) \
+do { \
+if constexpr (is_streamable<decltype(__VA_ARGS__)>::value) { \
+std::cout << "[RTTM] " << __FILE__ << ":" << __LINE__ << " (" << __FUNCTION__ << "): " << __VA_ARGS__ << std::endl; \
+} else { \
+std::cout << "[RTTM] " << __FILE__ << ":" << __LINE__ << " (" << __FUNCTION__ << "): " << "Unsupported type for stream output" << std::endl; \
+} \
+} while (0)
+
 namespace RTTM
 {
     enum class RTTMTypeBits
@@ -122,27 +145,136 @@ namespace RTTM
         }
     };
 
-    // 动态对象池管理器 - 支持256到2^20个对象的动态扩展和收缩
+    // 智能线程安全策略类
+    class ThreadSafetyStrategy
+    {
+    private:
+        inline static std::atomic<bool> multiThreadMode{false};
+        inline static std::atomic<int> activeThreadCount{1};
+
+    public:
+        // 检测多线程环境
+        static void RegisterThread()
+        {
+            int count = activeThreadCount.fetch_add(1);
+            if (count > 1)
+            {
+                multiThreadMode.store(true, std::memory_order_release);
+            }
+        }
+
+        static void UnregisterThread()
+        {
+            int count = activeThreadCount.fetch_sub(1);
+            if (count <= 1)
+            {
+                multiThreadMode.store(false, std::memory_order_release);
+            }
+        }
+
+        static bool IsMultiThreaded()
+        {
+            return multiThreadMode.load(std::memory_order_acquire);
+        }
+    };
+
+    // 智能锁包装器
+    template <typename Mutex>
+    class SmartLock
+    {
+    private:
+        Mutex& mutex_;
+        bool locked_;
+
+    public:
+        explicit SmartLock(Mutex& mutex) : mutex_(mutex), locked_(false)
+        {
+            if (ThreadSafetyStrategy::IsMultiThreaded())
+            {
+                mutex_.lock();
+                locked_ = true;
+            }
+        }
+
+        ~SmartLock()
+        {
+            if (locked_)
+            {
+                mutex_.unlock();
+            }
+        }
+    };
+
+    template <typename SharedMutex>
+    class SmartSharedLock
+    {
+    private:
+        SharedMutex& mutex_;
+        bool locked_;
+
+    public:
+        explicit SmartSharedLock(SharedMutex& mutex) : mutex_(mutex), locked_(false)
+        {
+            if (ThreadSafetyStrategy::IsMultiThreaded())
+            {
+                mutex_.lock_shared();
+                locked_ = true;
+            }
+        }
+
+        ~SmartSharedLock()
+        {
+            if (locked_)
+            {
+                mutex_.unlock_shared();
+            }
+        }
+    };
+
+    // 动态对象池管理器 - 支持256到2^20个对象的动态扩展和收缩，使用智能指针管理
     template <typename T>
     class DynamicObjectPoolManager
     {
     private:
-        static constexpr size_t MIN_POOL_SIZE = 256;           // 最小池大小
-        static constexpr size_t MAX_POOL_SIZE = 1048576;       // 最大池大小 (2^20)
-        static constexpr size_t GROWTH_FACTOR = 2;             // 增长因子
-        static constexpr size_t SHRINK_THRESHOLD = 4;          // 收缩阈值
-        static constexpr size_t MAX_OBJECT_SIZE = 1024;        // 最大对象大小限制
+        static constexpr size_t MIN_POOL_SIZE = 256; // 最小池大小
+        static constexpr size_t MAX_POOL_SIZE = 1048576; // 最大池大小 (2^20)
+        static constexpr size_t GROWTH_FACTOR = 2; // 增长因子
+        static constexpr size_t SHRINK_THRESHOLD = 4; // 收缩阈值
+        static constexpr size_t MAX_OBJECT_SIZE = 1024; // 最大对象大小限制
 
+        // 对象槽结构，保证内存对齐
         struct alignas(T) ObjectSlot
         {
             char data[sizeof(T)];
+
+            // 获取对象指针
+            T* GetObjectPtr() { return reinterpret_cast<T*>(data); }
+            const T* GetObjectPtr() const { return reinterpret_cast<const T*>(data); }
         };
 
-        std::vector<std::unique_ptr<ObjectSlot[]>> memoryBlocks; // 内存块集合
-        std::vector<ObjectSlot*> availableSlots;                 // 可用对象槽
-        std::atomic<size_t> currentCapacity{MIN_POOL_SIZE};      // 当前容量
-        std::atomic<size_t> usedCount{0};                        // 已使用数量
-        mutable std::mutex poolMutex;                            // 池操作互斥锁
+        // 内存块，使用智能指针管理
+        using MemoryBlock = std::unique_ptr<ObjectSlot[]>;
+
+        // 可用对象的智能指针包装
+        struct AvailableObject
+        {
+            std::shared_ptr<ObjectSlot> slot;
+
+            AvailableObject(ObjectSlot* rawSlot, MemoryBlock* parentBlock)
+                : slot(rawSlot, [parentBlock](ObjectSlot*)
+                {
+                    // 自定义删除器，不实际删除，因为内存由MemoryBlock管理
+                    // 这里可以添加调试信息或统计
+                })
+            {
+            }
+        };
+
+        std::vector<MemoryBlock> memoryBlocks; // 内存块集合
+        std::vector<AvailableObject> availableObjects; // 可用对象集合
+        std::atomic<size_t> currentCapacity{MIN_POOL_SIZE}; // 当前容量
+        std::atomic<size_t> usedCount{0}; // 已使用数量
+        mutable std::mutex poolMutex; // 池操作互斥锁
 
         // 扩展池容量
         void expandPool()
@@ -153,13 +285,15 @@ namespace RTTM
             size_t additionalSlots = newCapacity - currentCapacity.load();
             auto newBlock = std::make_unique<ObjectSlot[]>(additionalSlots);
 
+            // 保存原始指针用于后续引用
+            MemoryBlock* blockPtr = &memoryBlocks.emplace_back(std::move(newBlock));
+
             // 将新槽位添加到可用列表
             for (size_t i = 0; i < additionalSlots; ++i)
             {
-                availableSlots.push_back(&newBlock[i]);
+                availableObjects.emplace_back(&(*blockPtr)[i], blockPtr);
             }
 
-            memoryBlocks.push_back(std::move(newBlock));
             currentCapacity.store(newCapacity);
         }
 
@@ -170,7 +304,7 @@ namespace RTTM
             if (newCapacity >= currentCapacity.load()) return;
 
             // 只有在使用率很低时才收缩
-            if (availableSlots.size() * SHRINK_THRESHOLD < currentCapacity.load())
+            if (availableObjects.size() * SHRINK_THRESHOLD < currentCapacity.load())
             {
                 // 简单的收缩策略：移除最后的内存块
                 if (memoryBlocks.size() > 1)
@@ -178,16 +312,10 @@ namespace RTTM
                     // 计算要移除的槽位数量
                     size_t slotsToRemove = currentCapacity.load() - newCapacity;
 
-                    // 从可用槽位中移除对应的槽位
-                    auto it = availableSlots.end();
-                    for (size_t i = 0; i < slotsToRemove && it != availableSlots.begin(); ++i)
+                    // 从可用对象中移除对应的槽位
+                    if (availableObjects.size() >= slotsToRemove)
                     {
-                        --it;
-                    }
-
-                    if (it != availableSlots.end())
-                    {
-                        availableSlots.erase(it, availableSlots.end());
+                        availableObjects.erase(availableObjects.end() - slotsToRemove, availableObjects.end());
                         memoryBlocks.pop_back();
                         currentCapacity.store(newCapacity);
                     }
@@ -202,62 +330,110 @@ namespace RTTM
             {
                 // 初始化最小池容量
                 auto initialBlock = std::make_unique<ObjectSlot[]>(MIN_POOL_SIZE);
-                availableSlots.reserve(MIN_POOL_SIZE);
+                MemoryBlock* blockPtr = &memoryBlocks.emplace_back(std::move(initialBlock));
+
+                availableObjects.reserve(MIN_POOL_SIZE);
 
                 for (size_t i = 0; i < MIN_POOL_SIZE; ++i)
                 {
-                    availableSlots.push_back(&initialBlock[i]);
+                    availableObjects.emplace_back(&(*blockPtr)[i], blockPtr);
                 }
-
-                memoryBlocks.push_back(std::move(initialBlock));
             }
         }
 
-        T* AcquireObject()
+        // 获取对象，返回智能指针
+        std::shared_ptr<T> AcquireObject()
         {
             if constexpr (sizeof(T) <= MAX_OBJECT_SIZE && std::is_trivially_destructible_v<T>)
             {
                 std::lock_guard<std::mutex> lock(poolMutex);
 
-                // 如果可用槽位不足，扩展池
-                if (availableSlots.empty() && currentCapacity.load() < MAX_POOL_SIZE)
+                // 如果可用对象不足，扩展池
+                if (availableObjects.empty() && currentCapacity.load() < MAX_POOL_SIZE)
                 {
                     expandPool();
                 }
 
-                if (!availableSlots.empty())
+                if (!availableObjects.empty())
                 {
-                    T* obj = reinterpret_cast<T*>(availableSlots.back());
-                    availableSlots.pop_back();
+                    auto availableObj = std::move(availableObjects.back());
+                    availableObjects.pop_back();
                     usedCount.fetch_add(1, std::memory_order_relaxed);
-                    return obj;
+
+                    // 创建共享指针，自定义删除器负责归还到池中
+                    return std::shared_ptr<T>(
+                        availableObj.slot->GetObjectPtr(),
+                        [this, slot = availableObj.slot](T* obj)
+                        {
+                            // 归还对象到池中
+                            this->releaseObjectInternal(slot.get());
+                        }
+                    );
                 }
             }
             return nullptr;
         }
 
-        void ReleaseObject(T* obj)
+        // 内部释放方法
+        void releaseObjectInternal(ObjectSlot* slot)
         {
             if constexpr (sizeof(T) <= MAX_OBJECT_SIZE && std::is_trivially_destructible_v<T>)
             {
                 std::lock_guard<std::mutex> lock(poolMutex);
 
-                availableSlots.push_back(reinterpret_cast<ObjectSlot*>(obj));
-                usedCount.fetch_sub(1, std::memory_order_relaxed);
-
-                // 检查是否需要收缩池
-                if (availableSlots.size() * SHRINK_THRESHOLD > currentCapacity.load() &&
-                    currentCapacity.load() > MIN_POOL_SIZE)
+                // 找到对应的内存块
+                MemoryBlock* parentBlock = nullptr;
+                for (auto& block : memoryBlocks)
                 {
-                    shrinkPool();
+                    if (slot >= block.get() && slot < block.get() + (currentCapacity.load() / memoryBlocks.size()))
+                    {
+                        parentBlock = &block;
+                        break;
+                    }
                 }
+
+                if (parentBlock)
+                {
+                    availableObjects.emplace_back(slot, parentBlock);
+                    usedCount.fetch_sub(1, std::memory_order_relaxed);
+
+                    // 检查是否需要收缩池
+                    if (availableObjects.size() * SHRINK_THRESHOLD > currentCapacity.load() &&
+                        currentCapacity.load() > MIN_POOL_SIZE)
+                    {
+                        shrinkPool();
+                    }
+                }
+            }
+        }
+
+        // 废弃的原始指针接口，保留兼容性
+
+        [[deprecated]]
+        T* AcquireObjectRaw()
+        {
+            auto sharedObj = AcquireObject();
+            return sharedObj ? sharedObj.get() : nullptr;
+        }
+
+        [[deprecated]]
+        void ReleaseObject(T* obj)
+        {
+            // 这个方法现在不安全，因为无法确定对象的来源
+            // 建议使用智能指针版本
+            if (obj)
+            {
+                ObjectSlot* slot = reinterpret_cast<ObjectSlot*>(
+                    reinterpret_cast<char*>(obj) - offsetof(ObjectSlot, data)
+                );
+                releaseObjectInternal(slot);
             }
         }
 
         size_t GetAvailableCount() const
         {
             std::lock_guard<std::mutex> lock(poolMutex);
-            return availableSlots.size();
+            return availableObjects.size();
         }
 
         size_t GetCurrentCapacity() const
@@ -284,6 +460,13 @@ namespace RTTM
         // 工厂创建计数器
         mutable std::atomic<size_t> createCount{0};
 
+        // 内存来源标记
+        enum class MemorySource : uint8_t
+        {
+            Pool,
+            Allocator
+        };
+
     public:
         Factory()
         {
@@ -308,17 +491,22 @@ namespace RTTM
         {
             createCount.fetch_add(1, std::memory_order_relaxed);
 
+            std::shared_ptr<T> poolObject = nullptr;
             T* rawPtr = nullptr;
-            bool fromPool = false;
+            MemorySource memorySource = MemorySource::Allocator;
 
             // 优先尝试从动态对象池获取
-            rawPtr = objectPool.AcquireObject();
-            fromPool = (rawPtr != nullptr);
-
-            // 对象池没有可用对象，分配新内存
-            if (rawPtr == nullptr)
+            poolObject = objectPool.AcquireObject();
+            if (poolObject)
             {
+                rawPtr = poolObject.get();
+                memorySource = MemorySource::Pool;
+            }
+            else
+            {
+                // 对象池没有可用对象，分配新内存
                 rawPtr = Traits::allocate(*allocator, 1);
+                memorySource = MemorySource::Allocator;
             }
 
             if (rawPtr == nullptr)
@@ -331,12 +519,13 @@ namespace RTTM
                 // 使用完美转发和placement new构造对象
                 Traits::construct(*allocator, rawPtr, std::forward<Args>(args)...);
             }
-            catch (std::exception& e)
+            catch (const std::exception& e)
             {
                 // 构造失败，归还内存
-                if (fromPool)
+                if (memorySource == MemorySource::Pool)
                 {
-                    objectPool.ReleaseObject(rawPtr);
+                    // poolObject会自动归还到池中
+                    poolObject.reset();
                 }
                 else
                 {
@@ -346,20 +535,81 @@ namespace RTTM
                 throw;
             }
 
+            // 创建控制结构，管理内存来源和生命周期
+            struct ControlBlock
+            {
+                MemorySource source;
+                _Ref_<Allocator> allocatorRef;
+                std::shared_ptr<T> poolObjectRef; // 保持池对象的引用
+                std::atomic<bool> destroyed{false}; // 添加析构标志，防止重复析构
+
+                ControlBlock(MemorySource src, _Ref_<Allocator> alloc, std::shared_ptr<T> poolObj = nullptr)
+                    : source(src), allocatorRef(alloc), poolObjectRef(poolObj)
+                {
+                }
+            };
+
+            auto controlBlock = std::make_shared<ControlBlock>(
+                memorySource,
+                this->allocator,
+                poolObject
+            );
+
             // 创建智能指针，带自定义删除器
             return _Ref_<char>(reinterpret_cast<char*>(rawPtr),
-                               [allocCopy = this->allocator, fromPool](char* ptr)
+                               [controlBlock](char* ptr)
                                {
-                                   T* typedPtr = reinterpret_cast<T*>(ptr);
-                                   Traits::destroy(*allocCopy, typedPtr);
+                                   if (ptr == nullptr) return;
 
-                                   if (fromPool)
+                                   // 使用原子操作检查是否已经析构，防止重复析构
+                                   bool expected = false;
+                                   if (!controlBlock->destroyed.compare_exchange_strong(expected, true))
                                    {
-                                       objectPool.ReleaseObject(typedPtr);
+                                       // 已经被析构过了，直接返回
+                                       return;
                                    }
-                                   else
+
+                                   T* typedPtr = reinterpret_cast<T*>(ptr);
+
+                                   try
                                    {
-                                       Traits::deallocate(*allocCopy, typedPtr, 1);
+                                       // 根据内存来源进行不同的处理
+                                       if (controlBlock->source == MemorySource::Pool)
+                                       {
+                                           // 池对象：只需要重置智能指针，池会自动处理析构
+                                           controlBlock->poolObjectRef.reset();
+                                       }
+                                       else
+                                       {
+                                           // 分配器对象：手动析构然后释放内存
+                                           if constexpr (!std::is_trivially_destructible_v<T>)
+                                           {
+                                               Traits::destroy(*controlBlock->allocatorRef, typedPtr);
+                                           }
+                                           Traits::deallocate(*controlBlock->allocatorRef, typedPtr, 1);
+                                       }
+                                   }
+                                   catch (const std::exception& e)
+                                   {
+                                       std::cerr << "RTTM: 销毁对象时发生错误: " << e.what() << std::endl;
+                                       // 即使析构失败也要回收内存，避免内存泄漏
+                                       try
+                                       {
+                                           if (controlBlock->source == MemorySource::Pool)
+                                           {
+                                               controlBlock->poolObjectRef.reset();
+                                           }
+                                           else
+                                           {
+                                               // 强制释放内存，不再尝试析构
+                                               Traits::deallocate(*controlBlock->allocatorRef, typedPtr, 1);
+                                           }
+                                       }
+                                       catch (...)
+                                       {
+                                           // 最后的兜底，避免程序崩溃
+                                           std::cerr << "RTTM: 内存回收失败，可能存在内存泄漏" << std::endl;
+                                       }
                                    }
                                }
             );
@@ -607,13 +857,20 @@ namespace RTTM
                 std::atomic<bool> valid{true};
 
                 FactoryEntry() = default;
-                FactoryEntry(_Ref_<IFactory> f) : factory(std::move(f)) {}
+
+                FactoryEntry(_Ref_<IFactory> f) : factory(std::move(f))
+                {
+                }
 
                 FactoryEntry(const FactoryEntry& other)
-                    : factory(other.factory), valid(other.valid.load()) {}
+                    : factory(other.factory), valid(other.valid.load())
+                {
+                }
 
                 FactoryEntry(FactoryEntry&& other) noexcept
-                    : factory(std::move(other.factory)), valid(other.valid.load()) {}
+                    : factory(std::move(other.factory)), valid(other.valid.load())
+                {
+                }
 
                 FactoryEntry& operator=(const FactoryEntry& other)
                 {
@@ -689,7 +946,7 @@ namespace RTTM
                 {
                     // 清理最少使用的条目
                     auto it = factoryCache.begin();
-                    for (size_t i = 0; i < factoryCache.size() / 4 && it != factoryCache.end(); )
+                    for (size_t i = 0; i < factoryCache.size() / 4 && it != factoryCache.end();)
                     {
                         if (it->second.empty())
                         {
@@ -1255,24 +1512,69 @@ namespace RTTM
             static constexpr size_t MAX_POOL_SIZE = 1048576; // 2^20
             static constexpr size_t GROWTH_FACTOR = 2;
             static constexpr size_t SHRINK_THRESHOLD = 4;
+            mutable std::mutex poolMutex;
+            // RType对象的智能指针包装
+            struct PooledRType
+            {
+                std::unique_ptr<RType> rtypePtr;
+                std::atomic<bool> inUse{false};
+                std::atomic<bool> valid{true}; // 添加有效性标志
 
-            std::vector<std::unique_ptr<RType[]>> memoryBlocks;
-            std::vector<RType*> availableObjects;
+                PooledRType() : rtypePtr(std::make_unique<RType>())
+                {
+                }
+
+                // 安全重置方法
+                void SafeReset()
+                {
+                    if (valid.load() && rtypePtr)
+                    {
+                        try
+                        {
+                            rtypePtr->Reset();
+                        }
+                        catch (...)
+                        {
+                            // 忽略重置时的异常
+                        }
+                    }
+                    inUse.store(false);
+                }
+
+                // 标记为无效
+                void Invalidate()
+                {
+                    valid.store(false);
+                    inUse.store(false);
+                }
+            };
+
+            std::vector<std::unique_ptr<PooledRType[]>> memoryBlocks;
+            std::vector<std::shared_ptr<PooledRType>> availableObjects;
             std::atomic<size_t> currentCapacity{MIN_POOL_SIZE};
             std::atomic<size_t> usedCount{0};
-            mutable std::mutex poolMutex;
+            std::atomic<bool> shuttingDown{false}; // 添加关闭标志
 
             void expandPool()
             {
+                if (shuttingDown.load()) return; // 关闭时不再扩展
+
                 size_t newCapacity = std::min(currentCapacity.load() * GROWTH_FACTOR, MAX_POOL_SIZE);
                 if (newCapacity <= currentCapacity.load()) return;
 
                 size_t additionalObjects = newCapacity - currentCapacity.load();
-                auto newBlock = std::make_unique<RType[]>(additionalObjects);
+                auto newBlock = std::make_unique<PooledRType[]>(additionalObjects);
 
                 for (size_t i = 0; i < additionalObjects; ++i)
                 {
-                    availableObjects.push_back(&newBlock[i]);
+                    auto pooledPtr = std::shared_ptr<PooledRType>(
+                        &newBlock[i],
+                        [](PooledRType*)
+                        {
+                            // 自定义删除器，不实际删除
+                        }
+                    );
+                    availableObjects.push_back(pooledPtr);
                 }
 
                 memoryBlocks.push_back(std::move(newBlock));
@@ -1281,6 +1583,8 @@ namespace RTTM
 
             void shrinkPool()
             {
+                if (shuttingDown.load()) return; // 关闭时不再收缩
+
                 size_t newCapacity = std::max(currentCapacity.load() / GROWTH_FACTOR, MIN_POOL_SIZE);
                 if (newCapacity >= currentCapacity.load()) return;
 
@@ -1290,15 +1594,12 @@ namespace RTTM
                     {
                         size_t objectsToRemove = currentCapacity.load() - newCapacity;
 
-                        auto it = availableObjects.end();
-                        for (size_t i = 0; i < objectsToRemove && it != availableObjects.begin(); ++i)
+                        if (availableObjects.size() >= objectsToRemove)
                         {
-                            --it;
-                        }
-
-                        if (it != availableObjects.end())
-                        {
-                            availableObjects.erase(it, availableObjects.end());
+                            availableObjects.erase(
+                                availableObjects.end() - objectsToRemove,
+                                availableObjects.end()
+                            );
                             memoryBlocks.pop_back();
                             currentCapacity.store(newCapacity);
                         }
@@ -1315,20 +1616,39 @@ namespace RTTM
 
             DynamicRTypePool()
             {
-                auto initialBlock = std::make_unique<RType[]>(MIN_POOL_SIZE);
+                auto initialBlock = std::make_unique<PooledRType[]>(MIN_POOL_SIZE);
                 availableObjects.reserve(MIN_POOL_SIZE);
 
                 for (size_t i = 0; i < MIN_POOL_SIZE; ++i)
                 {
-                    availableObjects.push_back(&initialBlock[i]);
+                    auto pooledPtr = std::shared_ptr<PooledRType>(
+                        &initialBlock[i],
+                        [](PooledRType*)
+                        {
+                            // 自定义删除器，不实际删除
+                        }
+                    );
+                    availableObjects.push_back(pooledPtr);
                 }
 
                 memoryBlocks.push_back(std::move(initialBlock));
             }
 
-            RType* AcquireObject()
+            // 析构函数 - 安全关闭
+            ~DynamicRTypePool()
             {
+                shuttingDown.store(true);
+
                 std::lock_guard<std::mutex> lock(poolMutex);
+
+                // 清理容器
+                availableObjects.clear();
+                memoryBlocks.clear();
+            }
+
+            std::shared_ptr<RType> AcquireObject()
+            {
+                SmartLock<std::mutex> lock(poolMutex);
 
                 if (availableObjects.empty() && currentCapacity.load() < MAX_POOL_SIZE)
                 {
@@ -1337,37 +1657,62 @@ namespace RTTM
 
                 if (!availableObjects.empty())
                 {
-                    RType* obj = availableObjects.back();
+                    auto pooledObj = availableObjects.back();
                     availableObjects.pop_back();
-                    usedCount.fetch_add(1, std::memory_order_relaxed);
-                    return obj;
+
+                    if (pooledObj && pooledObj->valid.load())
+                    {
+                        pooledObj->inUse.store(true);
+                        usedCount.fetch_add(1, std::memory_order_relaxed);
+
+                        // 创建弱引用来避免循环引用
+                        std::weak_ptr<PooledRType> weakPooledObj = pooledObj;
+
+                        // 返回RType智能指针，使用弱引用避免访问已销毁的对象
+                        return std::shared_ptr<RType>(
+                            pooledObj->rtypePtr.get(),
+                            [this, weakPooledObj](RType* rtype) {
+                                // 使用弱引用检查对象是否仍然有效
+                                if (auto pooledObj = weakPooledObj.lock())
+                                {
+                                    this->releaseObjectInternal(pooledObj);
+                                }
+                            }
+                        );
+                    }
                 }
 
                 return nullptr;
             }
 
-            void ReleaseObject(RType* obj)
+        private:
+            void releaseObjectInternal(std::shared_ptr<PooledRType> pooledObj)
             {
-                if (!obj) return;
+                if (!pooledObj || shuttingDown.load()) return;
 
-                // 重置对象状态
-                obj->Reset();
+                // 安全重置对象
+                pooledObj->SafeReset();
 
-                std::lock_guard<std::mutex> lock(poolMutex);
+                SmartLock<std::mutex> lock(poolMutex);
 
-                availableObjects.push_back(obj);
-                usedCount.fetch_sub(1, std::memory_order_relaxed);
-
-                // 检查是否需要收缩池
-                if (availableObjects.size() * SHRINK_THRESHOLD > currentCapacity.load() &&
-                    currentCapacity.load() > MIN_POOL_SIZE)
+                if (!shuttingDown.load()) // 只在未关闭时才归还
                 {
-                    shrinkPool();
+                    availableObjects.push_back(pooledObj);
+                    usedCount.fetch_sub(1, std::memory_order_relaxed);
+
+                    // 检查是否需要收缩池
+                    if (availableObjects.size() * SHRINK_THRESHOLD > currentCapacity.load() &&
+                        currentCapacity.load() > MIN_POOL_SIZE)
+                    {
+                        shrinkPool();
+                    }
                 }
             }
 
+        public:
             size_t GetPoolSize() const
             {
+                if (shuttingDown.load()) return 0;
                 std::lock_guard<std::mutex> lock(poolMutex);
                 return availableObjects.size();
             }
@@ -1792,41 +2137,140 @@ namespace RTTM
             defaultFactoryValid.store(false, std::memory_order_relaxed);
         }
 
-        // 使用动态对象池创建
         static _Ref_<RType> CreateTypeOptimized(const std::string& type, RTTMTypeBits typeEnum,
                                                 const std::type_index& typeIndex,
                                                 const std::unordered_set<std::string>& membersName = {},
                                                 const std::unordered_set<std::string>& funcsName = {},
                                                 const _Ref_<char>& instance = nullptr)
         {
-            // 尝试从动态池获取对象
+            // 线程安全的静态类型缓存，使用智能锁策略
+            static std::unordered_map<std::string, std::pair<
+                                          std::unordered_set<std::string>, std::unordered_set<std::string>>> typeCache;
+            static std::shared_mutex typeCacheMutex;
+
+            // 尝试从动态池获取可复用的RType对象
             auto rtypePtr = DynamicRTypePool::Instance().AcquireObject();
 
             if (rtypePtr)
             {
-                // 从池中获取到对象，重新初始化
+                // 从池中成功获取对象，重新初始化对象状态
                 rtypePtr->type = type;
                 rtypePtr->typeEnum = typeEnum;
                 rtypePtr->typeIndex = typeIndex;
                 rtypePtr->instance = instance;
                 rtypePtr->valid = !type.empty();
                 rtypePtr->created = (typeEnum == RTTMTypeBits::Variable || instance != nullptr);
-                rtypePtr->membersName = membersName;
-                rtypePtr->funcsName = funcsName;
+
+                // 清理之前的缓存数据
+                rtypePtr->membersName.clear();
+                rtypePtr->funcsName.clear();
+
+                // 如果没有提供成员名称，尝试从缓存或类型信息中获取
+                if (membersName.empty())
+                {
+                    // 使用智能读锁检查缓存
+                    {
+                        SmartSharedLock<std::shared_mutex> readLock(typeCacheMutex);
+                        auto cacheIt = typeCache.find(type);
+                        if (cacheIt != typeCache.end())
+                        {
+                            // 从缓存中获取成员名称
+                            rtypePtr->membersName = cacheIt->second.first;
+                        }
+                    }
+
+                    // 如果缓存中没有，从类型信息中获取
+                    if (rtypePtr->membersName.empty())
+                    {
+                        // 从全局类型管理器中获取类型信息
+                        const auto* typeInfo = detail::GlobalTypeManager::Instance().GetTypeInfo(type);
+                        if (typeInfo)
+                        {
+                            rtypePtr->membersName.reserve(typeInfo->members.size());
+                            for (const auto& [name, _] : typeInfo->members)
+                            {
+                                rtypePtr->membersName.insert(name);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // 使用提供的成员名称
+                    rtypePtr->membersName = membersName;
+                }
+
+                // 如果没有提供函数名称，尝试从缓存或类型信息中获取
+                if (funcsName.empty())
+                {
+                    // 使用智能读锁检查缓存
+                    {
+                        SmartSharedLock<std::shared_mutex> readLock(typeCacheMutex);
+                        auto cacheIt = typeCache.find(type);
+                        if (cacheIt != typeCache.end())
+                        {
+                            // 从缓存中获取函数名称
+                            rtypePtr->funcsName = cacheIt->second.second;
+                        }
+                    }
+
+                    // 如果缓存中没有，从类型信息中获取
+                    if (rtypePtr->funcsName.empty())
+                    {
+                        // 从全局类型管理器中获取类型信息
+                        const auto* typeInfo = detail::GlobalTypeManager::Instance().GetTypeInfo(type);
+                        if (typeInfo)
+                        {
+                            rtypePtr->funcsName.reserve(typeInfo->functions.size());
+                            for (const auto& [name, _] : typeInfo->functions)
+                            {
+                                // 提取函数名称（去除参数部分）
+                                size_t paramStart = name.find('(');
+                                if (paramStart != std::string::npos)
+                                {
+                                    rtypePtr->funcsName.insert(name.substr(0, paramStart));
+                                }
+                                else
+                                {
+                                    rtypePtr->funcsName.insert(name);
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // 使用提供的函数名称
+                    rtypePtr->funcsName = funcsName;
+                }
+
+                // 如果成功获取了成员或函数信息，智能地更新缓存
+                if (!rtypePtr->membersName.empty() || !rtypePtr->funcsName.empty())
+                {
+                    SmartLock<std::shared_mutex> writeLock(typeCacheMutex);
+
+                    // 双重检查，避免重复写入
+                    auto cacheIt = typeCache.find(type);
+                    if (cacheIt == typeCache.end())
+                    {
+                        typeCache[type] = {rtypePtr->membersName, rtypePtr->funcsName};
+                    }
+                }
+
+                // 清理成员缓存和重置各种状态标志
                 rtypePtr->membersCache.clear();
                 rtypePtr->propertiesPreloaded.store(false, std::memory_order_relaxed);
                 rtypePtr->validityCacheValid.store(false, std::memory_order_relaxed);
                 rtypePtr->propCache.valid.store(false, std::memory_order_relaxed);
                 rtypePtr->defaultFactoryValid.store(false, std::memory_order_relaxed);
 
-                // 返回智能指针，自定义删除器将对象归还到池中
-                return _Ref_<RType>(rtypePtr, [](RType* ptr) {
-                    DynamicRTypePool::Instance().ReleaseObject(ptr);
-                });
+                // 返回从池中获取的对象，智能指针会自动管理生命周期
+                return rtypePtr;
             }
             else
             {
-                // 池中没有可用对象，创建新对象
+                // 池中没有可用对象，创建新的RType实例
+                // 这是回退机制，确保在池耗尽时仍能正常工作
                 return Create_Ref_<RType>(type, typeEnum, typeIndex, membersName, funcsName, instance);
             }
         }
@@ -2136,7 +2580,7 @@ namespace RTTM
             return true;
         }
 
-        void Destructor() const
+        /*void Destructor() const
         {
             if (valid && created && instance)
             {
@@ -2149,7 +2593,7 @@ namespace RTTM
                 created = false;
                 validityCacheValid.store(false, std::memory_order_release);
             }
-        }
+        }*/
 
         bool IsClass() const { return typeEnum == RTTMTypeBits::Class; }
         bool IsEnum() const { return typeEnum == RTTMTypeBits::Enum; }
@@ -2200,6 +2644,7 @@ namespace RTTM
         {
             if (!checkValidOptimized())
             {
+                RTTM_DEBUG("RTTM: 无效对象访问: " + type);
                 throw std::runtime_error("RTTM: 无效对象访问: " + type);
             }
 
@@ -2216,60 +2661,91 @@ namespace RTTM
         // 超高性能Get方法 - 核心优化点，三级缓存系统
         static _Ref_<RType> Get(const std::string& typeName)
         {
-            // L1缓存：线程局部快速缓存（最热门的类型）
-            static thread_local std::array<std::pair<std::string_view, _Ref_<RType>>, 16> hotCache{};
-            static thread_local size_t hotCacheIndex = 0;
+            // 静态预缓存系统 - 程序启动时加载所有注册类型
+            static std::once_flag initFlag;
+            static std::unordered_map<std::string, _Ref_<RType>> staticTypeCache;
+            static std::shared_mutex staticCacheMutex;
 
-            std::string_view typeNameView(typeName);
-
-            // 检查热缓存
-            for (const auto& [cachedName, cachedType] : hotCache)
+            // 一次性初始化所有注册类型的缓存
+            std::call_once(initFlag, []()
             {
-                if (cachedName == typeNameView && cachedType)
+                std::unique_lock<std::shared_mutex> lock(staticCacheMutex);
+
+                // 获取所有注册的类型
+                const auto& registeredTypes = detail::GlobalTypeManager::Instance().GetAllRegisteredTypes();
+
+                // 预先为所有类型创建原型并缓存
+                staticTypeCache.reserve(registeredTypes.size());
+
+                for (const auto& typeName : registeredTypes)
                 {
-                    // 创建新实例，避免共享状态
-                    return CreateTypeOptimized(
-                        cachedType->type,
-                        cachedType->typeEnum,
-                        cachedType->typeIndex,
-                        cachedType->membersName,
-                        cachedType->funcsName
+                    const auto* typeInfo = detail::GlobalTypeManager::Instance().GetTypeInfo(typeName);
+                    if (!typeInfo) continue;
+
+                    // 构建成员和函数名称集合
+                    std::unordered_set<std::string> membersName;
+                    std::unordered_set<std::string> funcsName;
+
+                    membersName.reserve(typeInfo->members.size());
+                    funcsName.reserve(typeInfo->functions.size());
+
+                    for (const auto& [name, _] : typeInfo->members)
+                    {
+                        membersName.emplace(name);
+                    }
+
+                    for (const auto& [name, _] : typeInfo->functions)
+                    {
+                        size_t paramStart = name.find('(');
+                        if (paramStart != std::string::npos)
+                        {
+                            funcsName.emplace(name.substr(0, paramStart));
+                        }
+                        else
+                        {
+                            funcsName.emplace(name);
+                        }
+                    }
+
+                    // 创建类型原型
+                    auto prototype = std::make_shared<RType>(
+                        typeName,
+                        typeInfo->type,
+                        typeInfo->typeIndex,
+                        membersName,
+                        funcsName,
+                        nullptr
                     );
+
+                    staticTypeCache[typeName] = prototype;
                 }
-            }
+            });
 
-            // L2缓存：类型原型缓存（所有类型）
-            static std::unordered_map<std::string_view, _Ref_<RType>> prototypeCache;
-            static std::shared_mutex prototypeMutex;
-
+            // 从静态缓存中查找类型
             {
-                std::shared_lock<std::shared_mutex> lock(prototypeMutex);
-                auto it = prototypeCache.find(typeNameView);
-                if (it != prototypeCache.end())
+                std::shared_lock<std::shared_mutex> lock(staticCacheMutex);
+                auto it = staticTypeCache.find(typeName);
+                if (it != staticTypeCache.end())
                 {
                     const auto& prototype = it->second;
-                    auto newInstance = CreateTypeOptimized(
+                    // 使用优化的创建方法创建新实例
+                    return CreateTypeOptimized(
                         prototype->type,
                         prototype->typeEnum,
                         prototype->typeIndex,
                         prototype->membersName,
                         prototype->funcsName
                     );
-
-                    // 更新热缓存
-                    hotCache[hotCacheIndex] = {typeNameView, prototype};
-                    hotCacheIndex = (hotCacheIndex + 1) % hotCache.size();
-
-                    return newInstance;
                 }
             }
 
-            // L3缓存：从全局类型管理器构建
+            // 如果在静态缓存中没有找到，说明类型未注册或是动态注册的新类型
             if (!detail::GlobalTypeManager::Instance().IsTypeRegistered(typeName))
             {
                 throw std::runtime_error("RTTM: 类型未注册: " + typeName);
             }
 
+            // 处理动态注册的新类型（热插拔支持）
             const auto* typeInfo = detail::GlobalTypeManager::Instance().GetTypeInfo(typeName);
             if (!typeInfo)
             {
@@ -2301,8 +2777,8 @@ namespace RTTM
                 }
             }
 
-            // 创建原型并缓存
-            auto prototype = CreateTypeOptimized(
+            // 创建新类型原型并添加到缓存
+            auto prototype = std::make_shared<RType>(
                 typeName,
                 typeInfo->type,
                 typeInfo->typeIndex,
@@ -2311,22 +2787,11 @@ namespace RTTM
                 nullptr
             );
 
-            // 更新原型缓存
+            // 线程安全地添加到静态缓存
             {
-                std::unique_lock<std::shared_mutex> lock(prototypeMutex);
-                // 控制缓存大小
-                if (prototypeCache.size() > 1000)
-                {
-                    auto it = prototypeCache.begin();
-                    std::advance(it, prototypeCache.size() / 4);
-                    prototypeCache.erase(prototypeCache.begin(), it);
-                }
-                prototypeCache[typeNameView] = prototype;
+                std::unique_lock<std::shared_mutex> lock(staticCacheMutex);
+                staticTypeCache[typeName] = prototype;
             }
-
-            // 更新热缓存
-            hotCache[hotCacheIndex] = {typeNameView, prototype};
-            hotCacheIndex = (hotCacheIndex + 1) % hotCache.size();
 
             // 返回新实例
             return CreateTypeOptimized(
@@ -2348,12 +2813,8 @@ namespace RTTM
         // 重置方法 - 清理资源和缓存
         void Reset() const
         {
-            if (created && instance)
-            {
-                Destructor();
-            }
-
-            instance.reset();
+            if (instance)
+                instance.reset();
             created = false;
             validityCacheValid.store(false, std::memory_order_release);
             propertiesPreloaded.store(false, std::memory_order_release);
@@ -2365,9 +2826,17 @@ namespace RTTM
         // 析构函数
         ~RType()
         {
-            if (valid && created && !type.empty())
+            try
             {
-                Destructor();
+                // 只在有效且已创建且类型不为空时才重置
+                if (valid && created && !type.empty())
+                {
+                    Reset(); // 调用Reset而不是直接调用Destructor
+                }
+            }
+            catch (...)
+            {
+                // 析构函数中不能抛出异常
             }
         }
     };
@@ -2600,8 +3069,8 @@ namespace RTTM
         // 批量设置属性值
         template <typename T>
         static void SetPropertyBatch(const std::vector<_Ref_<RType>>& objects,
-                                    const std::string& propertyName,
-                                    const T& value)
+                                     const std::string& propertyName,
+                                     const T& value)
         {
             for (const auto& obj : objects)
             {
@@ -2622,8 +3091,8 @@ namespace RTTM
         // 批量调用方法
         template <typename R, typename... Args>
         static std::vector<R> InvokeBatch(const std::vector<_Ref_<RType>>& objects,
-                                         const std::string& methodName,
-                                         Args... args)
+                                          const std::string& methodName,
+                                          Args... args)
         {
             std::vector<R> results;
             results.reserve(objects.size());
