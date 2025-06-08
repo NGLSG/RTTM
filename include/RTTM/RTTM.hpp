@@ -1364,11 +1364,11 @@ namespace RTTM
         void* instance;
         bool isMemberFunction;
 
-        // 调用缓存结构
+        // 调用缓存结构 - 仅对非void类型启用
         struct CallCache
         {
             std::vector<uint8_t> argsHash;
-            T result;
+            typename std::conditional_t<std::is_void_v<T>, int, T> result; // void类型用int占位
             std::atomic<bool> valid{false};
         };
 
@@ -1393,30 +1393,15 @@ namespace RTTM
             hash.insert(hash.end(), bytes, bytes + sizeof(Arg));
         }
 
-    public:
-        Method(const _Ref_<IFunctionWrapper>& func, const std::string& name, void* instance = nullptr,
-               bool isMemberFunction = false)
-            : func(func), name(name), instance(instance), isMemberFunction(isMemberFunction)
+    private:
+        template <typename... ConvertedArgs>
+        T invokeInternal(ConvertedArgs&&... args) const
         {
-        }
-
-        bool IsValid() const
-        {
-            return func != nullptr;
-        }
-
-        template <typename... Args>
-        T Invoke(Args... args) const
-        {
-            if (!IsValid())
-            {
-                throw std::runtime_error("无法调用无效方法: " + name);
-            }
-
-            // 缓存优化：仅对简单类型启用
-            if constexpr (std::conjunction_v<std::is_trivial<Args>...> &&
+            // 这里是原来的 Invoke 实现逻辑
+            if constexpr (std::conjunction_v<std::is_trivial<ConvertedArgs>...> &&
                 std::is_trivial_v<T> &&
-                sizeof...(Args) > 0)
+                !std::is_void_v<T> &&
+                sizeof...(ConvertedArgs) > 0)
             {
                 auto hash = hashArgs(args...);
 
@@ -1424,12 +1409,12 @@ namespace RTTM
                 {
                     if (!instance)
                         throw std::runtime_error("成员函数实例为空: " + name);
-                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, void*, Args...>>(func);
+                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, void*, ConvertedArgs...>>(func);
                     if (!wrapper)
                         throw std::runtime_error(
-                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<Args...>());
+                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<ConvertedArgs...>());
 
-                    T result = (*wrapper)(instance, std::forward<Args>(args)...);
+                    T result = (*wrapper)(instance, std::forward<ConvertedArgs>(args)...);
 
                     lastCall.argsHash = std::move(hash);
                     lastCall.result = result;
@@ -1439,12 +1424,12 @@ namespace RTTM
                 }
                 else
                 {
-                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, Args...>>(func);
+                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, ConvertedArgs...>>(func);
                     if (!wrapper)
                         throw std::runtime_error(
-                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<Args...>());
+                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<ConvertedArgs...>());
 
-                    T result = (*wrapper)(std::forward<Args>(args)...);
+                    T result = (*wrapper)(std::forward<ConvertedArgs>(args)...);
 
                     lastCall.argsHash = std::move(hash);
                     lastCall.result = result;
@@ -1460,29 +1445,100 @@ namespace RTTM
                 {
                     if (!instance)
                         throw std::runtime_error("成员函数实例为空: " + name);
-                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, void*, Args...>>(func);
+                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, void*, ConvertedArgs...>>(func);
                     if (!wrapper)
                         throw std::runtime_error(
-                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<Args...>());
+                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<ConvertedArgs...>());
 
-                    return (*wrapper)(instance, std::forward<Args>(args)...);
+                    if constexpr (std::is_void_v<T>)
+                    {
+                        (*wrapper)(instance, std::forward<ConvertedArgs>(args)...);
+                    }
+                    else
+                    {
+                        return (*wrapper)(instance, std::forward<ConvertedArgs>(args)...);
+                    }
                 }
                 else
                 {
-                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, Args...>>(func);
+                    auto wrapper = std::static_pointer_cast<FunctionWrapper<T, ConvertedArgs...>>(func);
                     if (!wrapper)
                         throw std::runtime_error(
-                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<Args...>());
+                            "函数签名不匹配: " + name + " 参数类型: " + Object::GetTypeName<ConvertedArgs...>());
 
-                    return (*wrapper)(std::forward<Args>(args)...);
+                    if constexpr (std::is_void_v<T>)
+                    {
+                        (*wrapper)(std::forward<ConvertedArgs>(args)...);
+                    }
+                    else
+                    {
+                        return (*wrapper)(std::forward<ConvertedArgs>(args)...);
+                    }
                 }
             }
         }
 
+        // 参数转换辅助函数
+        template <typename Arg>
+        auto convertArgumentIfNeeded(Arg&& arg) const
+        {
+            using DecayedArg = std::decay_t<Arg>;
+
+            // 如果是字符串字面量或 const char*，转换为 std::string
+            if constexpr (std::is_same_v<DecayedArg, const char*> ||
+                std::is_same_v<DecayedArg, char*> ||
+                (std::is_array_v<std::remove_reference_t<Arg>> &&
+                    std::is_same_v<std::remove_extent_t<std::remove_reference_t<Arg>>, char>))
+            {
+                return std::string(arg);
+            }
+            else
+            {
+                return std::forward<Arg>(arg);
+            }
+        }
+
+    public:
+        Method(const _Ref_<IFunctionWrapper>& func, const std::string& name, void* instance = nullptr,
+               bool isMemberFunction = false)
+            : func(func), name(name), instance(instance), isMemberFunction(isMemberFunction)
+        {
+        }
+
+        bool IsValid() const
+        {
+            return func != nullptr;
+        }
+
+        template <typename... Args>
+        T Invoke(Args&&... args) const
+        {
+            if (!IsValid())
+            {
+                throw std::runtime_error("无法调用无效方法: " + name);
+            }
+
+            // 转换参数类型
+            auto convertedArgs = std::make_tuple(convertArgumentIfNeeded(std::forward<Args>(args))...);
+
+            return std::apply([this](auto&&... convertedArgs)
+            {
+                return this->invokeInternal(std::forward<decltype(convertedArgs)>(convertedArgs)...);
+            }, convertedArgs);
+        }
+
+
         template <typename... Args>
         T operator()(Args... args) const
         {
-            return Invoke(std::forward<Args>(args)...);
+            if constexpr (std::is_void_v<T>)
+            {
+                Invoke(std::forward<Args>(args)...);
+            }
+            else
+            {
+                return Invoke(std::forward<Args>(args)...);
+            }
         }
 
         const std::string& GetName() const
@@ -1513,6 +1569,7 @@ namespace RTTM
             static constexpr size_t GROWTH_FACTOR = 2;
             static constexpr size_t SHRINK_THRESHOLD = 4;
             mutable std::mutex poolMutex;
+
             // RType对象的智能指针包装
             struct PooledRType
             {
@@ -1671,7 +1728,8 @@ namespace RTTM
                         // 返回RType智能指针，使用弱引用避免访问已销毁的对象
                         return std::shared_ptr<RType>(
                             pooledObj->rtypePtr.get(),
-                            [this, weakPooledObj](RType* rtype) {
+                            [this, weakPooledObj](RType* rtype)
+                            {
                                 // 使用弱引用检查对象是否仍然有效
                                 if (auto pooledObj = weakPooledObj.lock())
                                 {
@@ -1737,7 +1795,24 @@ namespace RTTM
                 return std::hash<std::string_view>{}(typeNames);
             }
         }
+        template <typename Value>
+        auto convertValueIfNeeded(const Value& value) const
+        {
+            using DecayedValue = std::decay_t<Value>;
 
+            // 如果是字符串字面量或 const char*，转换为 std::string
+            if constexpr (std::is_same_v<DecayedValue, const char*> ||
+                          std::is_same_v<DecayedValue, char*> ||
+                          (std::is_array_v<std::remove_reference_t<Value>> &&
+                           std::is_same_v<std::remove_extent_t<std::remove_reference_t<Value>>, char>))
+            {
+                return std::string(value);
+            }
+            else
+            {
+                return value;
+            }
+        }
         // 超高性能工厂查找 - 多级缓存策略
         template <typename... Args>
         _Ref_<IFactory> findFactoryOptimized() const
@@ -1856,10 +1931,27 @@ namespace RTTM
             using traits = detail::function_traits<FuncType>;
             using ReturnType = typename traits::return_type;
 
-            return std::apply([&name, this](auto... args)
+            return getMethodImplHelper<ReturnType, typename traits::arguments>(name);
+        }
+
+    private:
+        template <typename ReturnType, typename ArgsTuple>
+        struct getMethodImplHelperStruct;
+
+        template <typename ReturnType, typename... Args>
+        struct getMethodImplHelperStruct<ReturnType, std::tuple<Args...>>
+        {
+            template <typename Self>
+            static auto call(Self* self, const std::string& name)
             {
-                return getMethodOrig<ReturnType, decltype(args)...>(name);
-            }, typename traits::arguments{});
+                return self->template getMethodOrig<ReturnType, std::decay_t<Args>...>(name);
+            }
+        };
+
+        template <typename ReturnType, typename ArgsTuple>
+        auto getMethodImplHelper(const std::string& name) const
+        {
+            return getMethodImplHelperStruct<ReturnType, ArgsTuple>::call(this, name);
         }
 
         template <typename T, typename... Args>
@@ -2569,16 +2661,21 @@ namespace RTTM
                 return false;
             }
 
+            // 转换参数值
+            auto convertedValue = convertValueIfNeeded(value);
+            using ConvertedType = std::decay_t<decltype(convertedValue)>;
+
 #ifndef NDEBUG
-            if (typeIndex != std::type_index(typeid(T)) && !IsPrimitiveType())
+            if (typeIndex != std::type_index(typeid(ConvertedType)) && !IsPrimitiveType())
             {
                 throw std::runtime_error("RTTM: SetValue中类型不匹配");
             }
 #endif
 
-            *reinterpret_cast<T*>(instance.get()) = value;
+            *reinterpret_cast<ConvertedType*>(instance.get()) = convertedValue;
             return true;
         }
+
 
         /*void Destructor() const
         {
