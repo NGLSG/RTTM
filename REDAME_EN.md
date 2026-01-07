@@ -4,9 +4,9 @@
 # RTTM
 **Runtime Turbo Mirror**
 
-  <p><em>High-performance, lightweight C++17 dynamic reflection library</em></p>  
+  <p><em>High-performance, lightweight C++20 dynamic reflection library</em></p>  
 
-[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)  
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)  
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)  
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()  
 [![Compiler](https://img.shields.io/badge/compiler-MSVC%20%7C%20GCC%20%7C%20Clang-orange.svg)]()
@@ -18,7 +18,7 @@
 
 ## 🎯 Overview
 
-RTTM is a modern C++ reflection library designed for **game engines** and **performance-sensitive applications**. Based on the C++17 standard, it has zero external dependencies and provides core functionalities such as runtime type information, dynamic object creation, and method invocation.
+RTTM is a modern C++ reflection library designed for **game engines** and **performance-sensitive applications**. Based on the C++20 standard, it has zero external dependencies and provides core functionalities such as runtime type information, dynamic object creation, and method invocation.
 
 ## ✨ Core Features
 
@@ -27,55 +27,39 @@ RTTM is a modern C++ reflection library designed for **game engines** and **perf
 <td width="33%">  
 
 ### 🚀 High Performance
-- **51% faster** than mainstream libraries
-- **50% less** memory usage
-- Multi-thread optimized design
+- Property access caching optimization
+- Thread-safe design
+- Smart pointer memory management
 
 </td>  
 <td width="33%">  
 
-### 🔧 Zero Dependencies
-- Requires only C++17 standard library
-- Cross-platform compatibility
+### 🔧 Modern C++20
+- Concepts type constraints
+- Zero external dependencies
 - Supports MSVC/GCC/Clang
 
 </td>  
 <td width="33%">  
 
 ### 💡 Ease of Use
-- Intuitive API design
-- Chained call support
+- Intuitive chained API
 - Automatic registration mechanism
+- Comprehensive error handling
 
 </td>  
 </tr>  
 </table>  
 
-**Supported Reflections**: Enums • Classes/Structs • Template Classes • Global Variables • Global Functions
-
-## 📊 Performance Benchmarks
-
-<details>  
-<summary><strong>🏆 Performance Comparison with Mainstream Libraries</strong></summary>  
-
-| Test Dimension | RTTM                                                    | Boost.Hana                                       | RTTR                                              |  
-|---------|---------------------------------------------------------|--------------------------------------------------|---------------------------------------------------|  
-| **Serialization Time** | **2946ms**                                              | 3343ms <span style="color:#e74c3c">(+13%)</span> | 4450ms <span style="color:#e74c3c">(+51%)</span>  |  
-| **Property Access** | **1.5ns**                                               | 1.5ns                                            | 13.7ns <span style="color:#e74c3c">(+813%)</span> |  
-| **Multi-thread Throughput** | **1354 ops/ms**                                         | 896 ops/ms                                       | 459 ops/ms                                        |  
-| **Memory Efficiency** | **4 KB/Thousand Objects**                                            | 8 KB/Thousand Objects                                         | 8 KB/Thousand Objects                                          |  
-|**Object Creation**| 271us/Thousand Objects <span style="color:#e74c3c">(+3387.5%)</span> | **8us/Thousand Objects**                                      | **7us/Thousand Objects**                                       |  
-
-> 🔬 **Test Environment**: MSVC Release mode, based on 1 million object operations
-</details>  
+**Supported Reflections**: Classes/Structs • Properties • Methods • Constructors • Inheritance • STL Containers
 
 ## 🚀 Quick Start
 
 ### 1️⃣ Include Header
 
 ```cpp  
-#include "RTTM/RTTM.hpp"  
-using namespace RTTM;  
+#include "rttm/RTTM.hpp"  
+using namespace rttm;  
 ```  
 
 ### 2️⃣ Register Type
@@ -89,15 +73,17 @@ public:
     Person() = default;  
     Person(const std::string& n, int a) : name(n), age(a) {}  
       
-    std::string greeting() { return "Hello, I'm " + name; }  
+    std::string greeting() const { return "Hello, I'm " + name; }
+    void setAge(int a) { age = a; }
 };  
 
 // Register reflection info  
 RTTM_REGISTRATION {  
-    Registry_<Person>()  
+    Registry<Person>()  
         .property("name", &Person::name)  
         .property("age", &Person::age)  
-        .method("greeting", &Person::greeting)  
+        .method("greeting", &Person::greeting)
+        .method("setAge", &Person::setAge)
         .constructor<>()  
         .constructor<const std::string&, int>();  
 }  
@@ -107,81 +93,113 @@ RTTM_REGISTRATION {
 
 ```cpp  
 // Get type and create instance  
-auto personType = RType::Get<Person>();  
-auto result = personType->Create("Alice", 30);  
+auto personType = RType::get<Person>();  
+personType->create("Alice", 30);  
 
 // Property operations  
-personType->GetProperty<std::string>("name") = "Bob";  
-int age = personType->GetProperty<int>("age");  
+personType->property<std::string>("name") = "Bob";  
+int age = personType->property<int>("age");  
 
 // Method invocation  
-std::string greeting = personType->Invoke<std::string>("greeting");  
+std::string greeting = personType->invoke<std::string>("greeting");
+personType->invoke<void>("setAge", 25);
+
+// Property enumeration
+for (const auto& propName : personType->property_names()) {
+    std::cout << "Property: " << propName << std::endl;
+}
 ```  
 
-## 🎮 ECS System Example
+## 🔄 Inheritance Support
 
-<details>  
-<summary><strong>💡 View Complete Entity Component System Implementation</strong></summary>  
+```cpp
+class Animal {
+public:
+    std::string species;
+    virtual void speak() const = 0;
+};
 
-```cpp  
-#include "RTTM/Entity.hpp"  
+class Dog : public Animal {
+public:
+    std::string name;
+    void speak() const override { std::cout << "Woof!" << std::endl; }
+};
 
-// Health component  
-class Health : public RTTM::Component<Health> {  
-public:  
-    int hp = 100;  
-    Health(int h = 100) : hp(h) {}  
-      
-    std::string GetTypeName() const override { return "Health"; }  
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Health)); }  
-};  
+RTTM_REGISTRATION {
+    Registry<Animal>()
+        .property("species", &Animal::species);
+    
+    Registry<Dog>()
+        .base<Animal>()  // Inherit Animal's properties and methods
+        .property("name", &Dog::name)
+        .method("speak", &Dog::speak);
+}
 
-// Weapon system (abstract component)  
-class WeaponSystem : public RTTM::SingletonComponent<WeaponSystem> {  
-public:  
-    COMPONENT_DEPENDENCIES(Health) // Declare dependencies  
-      
-    int damage = 10;  
-    virtual void Attack() = 0;  
-      
-    std::string GetTypeName() const override { return "WeaponSystem"; }  
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(WeaponSystem)); }  
-};  
+// Usage
+auto dogType = RType::get<Dog>();
+dogType->create();
+dogType->property<std::string>("species") = "Canine";  // Access base class property
+dogType->property<std::string>("name") = "Buddy";
+dogType->invoke<void>("speak");  // Woof!
+```
 
-// Concrete weapon implementation  
-class Sword : public WeaponSystem {  
-public:  
-    Sword() { damage = 30; }  
-    void Attack() override { std::cout << "Sword Slash! Damage:" << damage << std::endl; }  
-    std::string GetTypeName() const override { return "Sword"; }  
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Sword)); }  
-};  
+## 📦 Container Reflection
 
-// Fighter entity  
-class Fighter : REQUIRE_COMPONENTS(WeaponSystem) {  
-public:  
-    void Attack() {  
-        GetComponentDynamic<WeaponSystem>().Attack();  
-    }  
-      
-    template<typename T>  
-    void ChangeWeapon() {  
-        SwapComponent<WeaponSystem, T>();  
-    }  
-};  
+RTTM supports dynamic reflection of STL containers:
 
-// Usage example  
-int main() {  
-    Fighter player;  
-    player.AddComponent<Health>(80);  
-    player.AddComponent<Sword>();  
-      
-    player.Attack();              // Sword Slash! Damage:30  
-    player.ChangeWeapon<Gun>();   // Dynamically switch weapons  
-    player.Attack();              // Gunshot! Damage:20  
-}  
-```  
-</details>  
+```cpp
+class GameData {
+public:
+    std::vector<int> scores;
+    std::map<std::string, int> playerStats;
+};
+
+RTTM_REGISTRATION {
+    Registry<GameData>()
+        .property("scores", &GameData::scores)
+        .property("playerStats", &GameData::playerStats);
+}
+
+// Using sequential container
+auto dataType = RType::get<GameData>();
+dataType->create();
+auto scoresContainer = dataType->sequential_container("scores");
+scoresContainer->push_back(100);
+scoresContainer->push_back(200);
+std::cout << "Size: " << scoresContainer->size() << std::endl;
+
+// Using associative container
+auto statsContainer = dataType->associative_container("playerStats");
+statsContainer->insert("player1", 1000);
+bool hasPlayer = statsContainer->contains("player1");
+```
+
+## 🛡️ Error Handling
+
+RTTM provides a clear exception hierarchy:
+
+```cpp
+try {
+    auto type = RType::get("NonExistentType");
+} catch (const TypeNotRegisteredError& e) {
+    std::cerr << "Type not found: " << e.type_name() << std::endl;
+}
+
+try {
+    auto personType = RType::get<Person>();
+    personType->property<int>("nonexistent");
+} catch (const PropertyNotFoundError& e) {
+    std::cerr << "Property not found: " << e.what() << std::endl;
+    // Error message includes list of available properties
+}
+
+try {
+    auto personType = RType::get<Person>();
+    personType->invoke<void>("greeting", 1, 2, 3);  // Parameter mismatch
+} catch (const MethodSignatureMismatchError& e) {
+    std::cerr << "Method signature mismatch: " << e.what() << std::endl;
+}
+```
 
 ## 🔄 Serialization Support
 
@@ -193,24 +211,25 @@ int main() {
 using json = nlohmann::json;  
 
 // Generic serialization function  
-json ToJson(const RType& type) {  
+json ToJson(RType& type) {  
     json j;  
-    for (const auto& name : type.GetPropertyNames()) {  
-        auto prop = type.GetProperty(name);  
-        if (prop->Is<int>()) j[name] = prop->As<int>();  
-        else if (prop->Is<std::string>()) j[name] = prop->As<std::string>();  
-        else if (prop->IsClass()) j[name] = ToJson(*prop);  
+    for (const auto& name : type.property_names()) {  
+        auto prop = type.property(name);  
+        if (prop->is<int>()) j[std::string(name)] = prop->as<int>();  
+        else if (prop->is<std::string>()) j[std::string(name)] = prop->as<std::string>();  
+        else if (prop->is_class()) j[std::string(name)] = ToJson(*prop);  
     }  
     return j;  
 }  
 
 // Generic deserialization function  
-void FromJson(const RType& type, const json& j) {  
-    for (const auto& name : type.GetPropertyNames()) {  
-        if (j.contains(name)) {  
-            auto prop = type.GetProperty(name);  
-            if (prop->Is<int>()) prop->SetValue(j[name].get<int>());  
-            else if (prop->IsClass()) FromJson(*prop, j[name]);  
+void FromJson(RType& type, const json& j) {  
+    for (const auto& name : type.property_names()) {
+        std::string nameStr(name);
+        if (j.contains(nameStr)) {  
+            auto prop = type.property(name);  
+            if (prop->is<int>()) prop->as<int>() = j[nameStr].get<int>();  
+            else if (prop->is_class()) FromJson(*prop, j[nameStr]);  
         }  
     }  
 }  
@@ -220,20 +239,20 @@ void FromJson(const RType& type, const json& j) {
 ## ⚙️ Build Integration
 
 ### System Requirements
-- **C++17** or higher
-- **Compiler**: MSVC 2019+ / GCC 7+ / Clang 5+
+- **C++20** or higher
+- **Compiler**: MSVC 2019+ / GCC 10+ / Clang 10+
 - **Platform**: Windows / Linux / macOS
 
 ### CMake Integration
 
 ```cmake  
-# Add RTTM  
-add_executable(MyProject main.cpp)  
-target_link_libraries(MyProject PRIVATE RTTM)  
+# Set C++20 standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enable automatic reflection generation  
-include(<RTTM_PATH>/cmake/reflection.cmake)  
-rttm_add_reflection(MyProject)  
+# Add RTTM  
+add_subdirectory(RTTM)
+target_link_libraries(MyProject PRIVATE RTTM)  
 ```  
 
 ### Manual Integration
@@ -243,26 +262,44 @@ rttm_add_reflection(MyProject)
 git clone https://github.com/NGLSG/RTTM.git  
 
 # 2. Add to project  
-# Copy RTTM folder into project  
+# Copy include/rttm folder into project  
 
 # 3. Compiler flags  
-# GCC/Clang: -std=c++17  
-# MSVC: /std:c++17  
+# GCC/Clang: -std=c++20  
+# MSVC: /std:c++20  
 ```  
 
-## 📚 Advanced Features
+## 📚 API Reference
 
-<div align="center">  
+### Registry<T> - Type Registrar
 
-| Feature | Description | Example |  
-|------|------|------|  
-| **Enum Reflection** | Dynamic access to enum values | `Enum::Get<MyEnum>()` |  
-| **Template Classes** | Supports template type reflection | `Registry_<Vec<int>>()` |  
-| **Global Functions** | Register and invoke global functions | `Global::RegisterMethod()` |  
-| **Inheritance Support** | Reflects class inheritance relationships | `base()` chained calls |  
-| **Auto Dependencies** | ECS component auto-dependency management | `COMPONENT_DEPENDENCIES()` |  
+| Method | Description |
+|------|------|
+| `property(name, member_ptr)` | Register member property |
+| `method(name, method_ptr)` | Register member method |
+| `constructor<Args...>()` | Register constructor |
+| `base<Base>()` | Declare inheritance relationship |
 
-</div>  
+### RType - Runtime Type Handle
+
+| Method | Description |
+|------|------|
+| `get<T>()` / `get(name)` | Get type handle |
+| `create(args...)` | Create instance |
+| `property<T>(name)` | Type-safe property access |
+| `property(name)` | Dynamic property access |
+| `invoke<R>(name, args...)` | Invoke method |
+| `property_names()` | Get all property names |
+| `method_names()` | Get all method names |
+
+### Exception Types
+
+| Exception | Description |
+|------|------|
+| `TypeNotRegisteredError` | Type not registered |
+| `PropertyNotFoundError` | Property not found |
+| `MethodSignatureMismatchError` | Method signature mismatch |
+| `ObjectNotCreatedError` | Object not created |
 
 ## 🤝 Contribution Guide
 
@@ -281,7 +318,7 @@ This project is licensed under the [MIT License](LICENSE) - see the file for det
 ---  
 
 <div align="center">  
-  <h3>🌟 Modern C++ Reflection Solution for High-Performance Applications</h3>  
+  <h3>🌟 Modern C++20 Reflection Solution for High-Performance Applications</h3>  
 
 **Made with ❤️ by [NGLSG](https://github.com/NGLSG)**
 

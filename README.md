@@ -4,12 +4,11 @@
 # RTTM
 **Runtime Turbo Mirror**
 
-  <p><em>高性能、轻量级的C++17动态反射库</em></p>
+  <p><em>高性能 C++20 动态反射库 — 动态查找，静态访问</em></p>
 
-[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
-[![Compiler](https://img.shields.io/badge/compiler-MSVC%20%7C%20GCC%20%7C%20Clang-orange.svg)]()
 
 <a href="README_EN.md">🌐 English</a> • <a href="README.md">🇨🇳 中文</a>
 </div>
@@ -18,274 +17,187 @@
 
 ## 🎯 概述
 
-RTTM是一个专为**游戏引擎**和**性能敏感应用**设计的现代C++反射库。基于C++17标准，零外部依赖，提供运行时类型信息、动态对象创建和方法调用等核心功能。
+RTTM 是一个专为**游戏引擎**和**性能敏感应用**设计的 C++20 动态反射库。
+
+**核心设计理念：动态查找 + 静态访问**
+- 通过字符串动态查找类型/属性/方法（运行时灵活性）
+- 使用 typed pointer arithmetic 访问数据（接近直接访问的性能）
+
+## ⚡ 性能对比 (vs RTTR)
+
+| 操作 | RTTM | RTTR | 加速比 |
+|------|------|------|--------|
+| 属性读取 (cached) | 1.07 ns | 13.1 ns | **12x** |
+| 属性写入 (cached) | 1.50 ns | 3.98 ns | **2.7x** |
+| 多属性访问 (3个) | 0.28 ns | 82.8 ns | **296x** |
+| 方法调用 (cached) | 3.27 ns | 13.9 ns | **4.3x** |
+| 对象创建 | 30.7 ns | 74.9 ns | **2.4x** |
+| 完整动态路径 | 20.6 ns | 33.9 ns | **1.6x** |
+| 批量属性访问 (100个) | 9.94 ns | 1476 ns | **148x** |
+
+> 测试环境: 20核 CPU @ 3.9GHz, Clang -O3  
+> 完整结果见 [benchmark/BENCHMARK_RESULTS.md](benchmark/BENCHMARK_RESULTS.md)
 
 ## ✨ 核心特性
 
-<table>
-<tr>
-<td width="33%">
-
-### 🚀 高性能
-- 比主流库快 **51%**
-- 内存占用减少 **50%**
-- 多线程优化设计
-
-</td>
-<td width="33%">
-
-### 🔧 零依赖
-- 仅需 C++17 标准库
-- 跨平台兼容
-- 支持 MSVC/GCC/Clang
-
-</td>
-<td width="33%">
-
-### 💡 易用性
-- 直观的 API 设计
-- 链式调用支持
-- 自动注册机制
-
-</td>
-</tr>
-</table>
-
-**支持反射**：枚举 • 类/结构体 • 模板类 • 全局变量 • 全局函数
-
-## 📊 性能基准
-
-<details>
-<summary><strong>🏆 与主流库性能对比</strong></summary>
-
-| 测试维度 | RTTM                                                    | Boost.Hana                                       | RTTR                                              |
-|---------|---------------------------------------------------------|--------------------------------------------------|---------------------------------------------------|
-| **序列化时间** | **2946ms**                                              | 3343ms <span style="color:#e74c3c">(+13%)</span> | 4450ms <span style="color:#e74c3c">(+51%)</span>  |
-| **属性访问** | **1.5ns**                                               | 1.5ns                                            | 13.7ns <span style="color:#e74c3c">(+813%)</span> |
-| **多线程吞吐** | **1354 ops/ms**                                         | 896 ops/ms                                       | 459 ops/ms                                        |
-| **内存效率** | **4 KB/千对象**                                            | 8 KB/千对象                                         | 8 KB/千对象                                          |
-|**对象创建**| 271us/千对象 <span style="color:#e74c3c">(+3387.5%)</span> | **8us/千对象**                                      | **7us/千对象**                                       |
-
-> 🔬 **测试环境**：MSVC Release模式，基于100w对象操作场景
-</details>
+- **高性能**: Cached 属性访问仅比直接访问慢 5x（RTTR 慢 65x）
+- **零依赖**: 纯 C++20，无外部库依赖
+- **类型安全**: 编译期类型检查，运行时错误提示
+- **线程安全**: 读写锁 + TLS 缓存优化
 
 ## 🚀 快速开始
 
-### 1️⃣ 引入头文件
+### 1. 注册类型
 
 ```cpp
 #include "RTTM/RTTM.hpp"
-using namespace RTTM;
-```
+using namespace rttm;
 
-### 2️⃣ 注册类型
-
-```cpp
-class Person {
+class Player {
 public:
     std::string name;
-    int age = 0;
+    int health = 100;
     
-    Person() = default;
-    Person(const std::string& n, int a) : name(n), age(a) {}
-    
-    std::string greeting() { return "Hello, I'm " + name; }
+    int getHealth() const { return health; }
+    void setHealth(int h) { health = h; }
 };
 
-// 注册反射信息
 RTTM_REGISTRATION {
-    Registry_<Person>()
-        .property("name", &Person::name)
-        .property("age", &Person::age)
-        .method("greeting", &Person::greeting)
-        .constructor<>()
-        .constructor<const std::string&, int>();
+    Registry<Player>()
+        .property("name", &Player::name)
+        .property("health", &Player::health)
+        .method("getHealth", &Player::getHealth)
+        .method("setHealth", &Player::setHealth);
 }
 ```
 
-### 3️⃣ 动态操作
+### 2. 动态访问 (简单 API)
 
 ```cpp
-// 获取类型并创建实例
-auto personType = RType::Get<Person>();
-auto result = personType->Create("Alice", 30);
+// 获取类型
+auto handle = RTypeHandle::get<Player>();
 
-// 属性操作
-personType->GetProperty<std::string>("name") = "Bob";
-int age = personType->GetProperty<int>("age");
+// 创建实例
+auto instance = handle.create();
+auto* player = static_cast<Player*>(instance.get());
 
-// 方法调用
-std::string greeting = personType->Invoke<std::string>("greeting");
+// 绑定对象进行操作
+auto bound = handle.bind(*player);
+bound.set("name", std::string("Alice"));
+bound.set("health", 80);
+
+std::string name = bound.get<std::string>("name");  // "Alice"
+int hp = bound.call<int>("getHealth");              // 80
 ```
 
-## 🎮 ECS系统示例
-
-<details>
-<summary><strong>💡 查看完整的实体组件系统实现</strong></summary>
+### 3. 高性能访问 (缓存句柄)
 
 ```cpp
-#include "RTTM/Entity.hpp"
+// 预缓存属性/方法句柄 (循环外)
+auto handle = RTypeHandle::get<Player>();
+auto propHealth = handle.get_property<int>("health");
+auto methGetHealth = handle.get_method("getHealth", 0);
 
-// 健康组件
-class Health : public RTTM::Component<Health> {
-public:
-    int hp = 100;
-    Health(int h = 100) : hp(h) {}
-    
-    std::string GetTypeName() const override { return "Health"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Health)); }
-};
-
-// 武器系统（抽象组件）
-class WeaponSystem : public RTTM::SingletonComponent<WeaponSystem> {
-public:
-    COMPONENT_DEPENDENCIES(Health) // 声明依赖
-    
-    int damage = 10;
-    virtual void Attack() = 0;
-    
-    std::string GetTypeName() const override { return "WeaponSystem"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(WeaponSystem)); }
-};
-
-// 具体武器实现
-class Sword : public WeaponSystem {
-public:
-    Sword() { damage = 30; }
-    void Attack() override { std::cout << "剑击！伤害:" << damage << std::endl; }
-    std::string GetTypeName() const override { return "Sword"; }
-    std::type_index GetTypeIndex() const override { return std::type_index(typeid(Sword)); }
-};
-
-// 战士实体
-class Fighter : REQUIRE_COMPONENTS(WeaponSystem) {
-public:
-    void Attack() {
-        GetComponentDynamic<WeaponSystem>().Attack();
-    }
-    
-    template<typename T>
-    void ChangeWeapon() {
-        SwapComponent<WeaponSystem, T>();
-    }
-};
-
-// 使用示例
-int main() {
-    Fighter player;
-    player.AddComponent<Health>(80);
-    player.AddComponent<Sword>();
-    
-    player.Attack();              // 剑击！伤害:30
-    player.ChangeWeapon<Gun>();   // 动态切换武器
-    player.Attack();              // 射击！伤害:20
+// 热路径访问 (循环内) - 接近直接访问性能
+for (auto& player : players) {
+    int hp = propHealth.get(player);      // ~1ns
+    propHealth.set(player, hp - 10);      // ~1.5ns
+    int current = methGetHealth.call<int>(&player);  // ~3ns
 }
 ```
-</details>
 
-## 🔄 序列化支持
+## 📊 性能层级
 
-<details>
-<summary><strong>📝 JSON序列化示例</strong></summary>
+```
+直接访问:        0.2 ns  (baseline)
+RTTM Cached:     1-3 ns  (5-15x baseline)
+RTTM FullDynamic: 5-20 ns (25-100x baseline)
+RTTR Cached:     4-14 ns (20-70x baseline)
+```
+
+**选择建议:**
+- 热路径/循环内: 使用 `PropertyHandle` / `MethodHandle`
+- 一般场景: 使用 `BoundType.get/set/call`
+- 完全动态: 使用字符串查找
+
+## 🔧 API 概览
+
+### RTypeHandle - 轻量类型句柄
 
 ```cpp
-#include <nlohmann/json.hpp>
-using json = nlohmann::json;
+auto handle = RTypeHandle::get<T>();           // 静态获取
+auto handle = RTypeHandle::get("TypeName");    // 动态获取
 
-// 通用序列化函数
-json ToJson(const RType& type) {
-    json j;
-    for (const auto& name : type.GetPropertyNames()) {
-        auto prop = type.GetProperty(name);
-        if (prop->Is<int>()) j[name] = prop->As<int>();
-        else if (prop->Is<std::string>()) j[name] = prop->As<std::string>();
-        else if (prop->IsClass()) j[name] = ToJson(*prop);
-    }
-    return j;
+handle.create();                               // 创建实例
+handle.bind(obj);                              // 绑定对象
+handle.get_property<T>("name");                // 获取属性句柄
+handle.get_method("name", argc);               // 获取方法句柄
+```
+
+### BoundType - 绑定对象操作
+
+```cpp
+auto bound = handle.bind(obj);
+
+bound.get<T>("name");           // 读取属性
+bound.set("name", value);       // 写入属性
+bound.call<R>("method", args);  // 调用方法
+```
+
+### PropertyHandle - 缓存属性访问
+
+```cpp
+auto prop = handle.get_property<int>("health");
+
+prop.get(obj);           // 读取 (~1ns)
+prop.set(obj, value);    // 写入 (~1.5ns)
+```
+
+### MethodHandle - 缓存方法调用
+
+```cpp
+auto meth = handle.get_method("getHealth", 0);
+
+meth.call<int>(&obj);              // 无参调用 (~3ns)
+meth.call<void>(&obj, arg1);       // 带参调用 (~5ns)
+```
+
+## 🛡️ 错误处理
+
+```cpp
+try {
+    auto handle = RTypeHandle::get("Unknown");
+} catch (const TypeNotRegisteredError& e) {
+    // 类型未注册
 }
 
-// 通用反序列化函数
-void FromJson(const RType& type, const json& j) {
-    for (const auto& name : type.GetPropertyNames()) {
-        if (j.contains(name)) {
-            auto prop = type.GetProperty(name);
-            if (prop->Is<int>()) prop->SetValue(j[name].get<int>());
-            else if (prop->IsClass()) FromJson(*prop, j[name]);
-        }
-    }
+try {
+    bound.get<int>("unknown");
+} catch (const PropertyNotFoundError& e) {
+    // 属性未找到，e.available_properties() 返回可用属性列表
 }
 ```
-</details>
 
-## ⚙️ 构建集成
-
-### 系统要求
-- **C++17** 或更高版本
-- **编译器**：MSVC 2019+ / GCC 7+ / Clang 5+
-- **平台**：Windows / Linux / macOS
-
-### CMake集成
+## ⚙️ 构建
 
 ```cmake
-# 添加RTTM
-add_executable(MyProject main.cpp)
+set(CMAKE_CXX_STANDARD 20)
+add_subdirectory(RTTM)
 target_link_libraries(MyProject PRIVATE RTTM)
-
-# 启用自动反射生成
-include(<RTTM_PATH>/cmake/reflection.cmake)
-rttm_add_reflection(MyProject)
 ```
 
-### 手动集成
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/NGLSG/RTTM.git
-
-# 2. 添加到项目
-# 将RTTM文件夹复制到项目中
-
-# 3. 编译选项
-# GCC/Clang: -std=c++17
-# MSVC: /std:c++17
-```
-
-## 📚 高级特性
-
-<div align="center">
-
-| 特性 | 说明 | 示例 |
-|------|------|------|
-| **枚举反射** | 支持枚举值的动态访问 | `Enum::Get<MyEnum>()` |
-| **模板类** | 支持模板类型反射 | `Registry_<Vec<int>>()` |
-| **全局函数** | 注册和调用全局函数 | `Global::RegisterMethod()` |
-| **继承支持** | 支持类继承关系反射 | `base()` 链式调用 |
-| **自动依赖** | ECS组件自动依赖管理 | `COMPONENT_DEPENDENCIES()` |
-
-</div>
-
-## 🤝 贡献指南
-
-我们欢迎所有形式的贡献！
-
-1. 🍴 **Fork** 本仓库
-2. 🌿 创建特性分支：`git checkout -b feature/amazing-feature`
-3. 💾 提交更改：`git commit -m 'Add amazing feature'`
-4. 📤 推送分支：`git push origin feature/amazing-feature`
-5. 🔄 创建 **Pull Request**
+**要求:** C++20, MSVC 2019+ / GCC 10+ / Clang 10+
 
 ## 📄 许可证
 
-本项目采用 [MIT许可证](LICENSE) - 查看文件了解详情
+[MIT License](LICENSE)
 
 ---
 
 <div align="center">
-  <h3>🌟 为高性能应用打造的现代C++反射解决方案</h3>
 
 **Made with ❤️ by [NGLSG](https://github.com/NGLSG)**
 
 [![Star](https://img.shields.io/github/stars/NGLSG/RTTM?style=social)](https://github.com/NGLSG/RTTM)
-[![Fork](https://img.shields.io/github/forks/NGLSG/RTTM?style=social)](https://github.com/NGLSG/RTTM/fork)
-[![Watch](https://img.shields.io/github/watchers/NGLSG/RTTM?style=social)](https://github.com/NGLSG/RTTM)
+
 </div>

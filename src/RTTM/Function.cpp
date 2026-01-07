@@ -1,7 +1,8 @@
-#include "Function.hpp"
+// Function.cpp - Implementation file for RTTM Function module
+// All implementations are in the header file
+
+#include "RTTM/Function.hpp"
 
 namespace RTTM {
-    IFunctionWrapper::~IFunctionWrapper()
-    {
-    }
-} // Cherry
+    // Empty - all implementations are in the header
+} // RTTM
