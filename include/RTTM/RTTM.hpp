@@ -4,6 +4,18 @@
  * 
  * This is the single header include for basic reflection functionality.
  * Include this file to access all public RTTM APIs.
+ * 
+ * RTTM provides three API layers:
+ * 
+ * 1. Semi-static (fastest): PropertyHandle<T>, TypedMethodHandle<Sig>
+ *    - Compile-time type knowledge, zero overhead
+ *    
+ * 2. Cached dynamic: MethodHandle, BoundType
+ *    - Runtime lookup once, cached for repeated access
+ *    
+ * 3. Pure dynamic: Instance, Variant
+ *    - No compile-time type knowledge needed
+ *    - DLL-compatible, works with dynamically loaded types
  */
 
 #ifndef RTTM_RTTM_HPP
@@ -37,6 +49,10 @@
 // Container reflection support
 #include "detail/Container.hpp"
 #include "detail/ContainerImpl.hpp"
+
+// Pure dynamic reflection (RTTR-like)
+#include "detail/Variant.hpp"
+#include "detail/Instance.hpp"
 
 /**
  * @brief Macro for registering types with RTTM

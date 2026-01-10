@@ -116,8 +116,15 @@ struct MemberInfo {
  * @brief Raw invoker function pointer type for maximum performance
  * 
  * Using a raw function pointer avoids std::function's virtual call overhead.
+ * The method_ptr parameter is the stored method pointer from MethodInfo.
  */
-using RawInvoker = std::any(*)(void*, std::span<std::any>);
+using RawInvoker = std::any(*)(void* obj, std::span<std::any> args, void* method_ptr);
+
+/**
+ * @brief Variant-based invoker for pure dynamic path
+ * The method_ptr parameter is the stored method pointer from MethodInfo.
+ */
+using VariantInvoker = void(*)(void* obj, void* result, const void* const* args, std::size_t nargs, void* method_ptr);
 
 /**
  * @brief Information about a class method
@@ -129,6 +136,8 @@ struct MethodInfo {
     std::string name;                                               ///< Name of the method
     std::function<std::any(void*, std::span<std::any>)> invoker;   ///< Type-erased method invoker (fallback)
     RawInvoker raw_invoker = nullptr;                               ///< Raw function pointer invoker (fast path)
+    VariantInvoker variant_invoker = nullptr;                       ///< Direct variant invoker (fastest dynamic path)
+    void* method_ptr = nullptr;                                     ///< Stored method pointer (type-erased)
     std::vector<std::type_index> param_types;                       ///< Parameter type information
     std::type_index return_type;                                    ///< Return type information
     std::string return_type_name;                                   ///< Human-readable return type name
@@ -141,6 +150,8 @@ struct MethodInfo {
         : name{}
         , invoker{}
         , raw_invoker{nullptr}
+        , variant_invoker{nullptr}
+        , method_ptr{nullptr}
         , param_types{}
         , return_type{typeid(void)}
         , return_type_name{"void"}
@@ -170,7 +181,7 @@ struct MethodInfo {
      */
     [[nodiscard]] std::any call(void* obj, std::span<std::any> args) const {
         if (raw_invoker) [[likely]] {
-            return raw_invoker(obj, args);
+            return raw_invoker(obj, args, method_ptr);
         }
         return invoker(obj, args);
     }

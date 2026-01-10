@@ -114,6 +114,24 @@ if(benchmark_FOUND)
     else()
         message(STATUS "RTTR benchmark disabled (rttr not found)")
     endif()
+    
+    # refl-cpp Benchmark (fetch from GitHub)
+    include(FetchContent)
+    FetchContent_Declare(
+        refl-cpp
+        GIT_REPOSITORY https://github.com/veselink1/refl-cpp.git
+        GIT_TAG        v0.12.4
+    )
+    FetchContent_MakeAvailable(refl-cpp)
+    
+    add_executable(reflcpp_benchmark benchmark/reflcpp_benchmark.cpp)
+    target_link_libraries(reflcpp_benchmark PRIVATE 
+        benchmark::benchmark 
+        benchmark::benchmark_main
+        refl-cpp
+    )
+    target_compile_features(reflcpp_benchmark PRIVATE cxx_std_20)
+    message(STATUS "refl-cpp benchmark enabled")
 else()
     message(STATUS "Benchmarks disabled (Google Benchmark not found)")
 endif()

@@ -4,7 +4,7 @@
 # RTTM
 **Runtime Turbo Mirror**
 
-  <p><em>高性能 C++20 动态反射库 — 动态查找，静态访问</em></p>
+  <p><em>高性能 C++20 动态反射库 — 从纯动态到零开销，全场景覆盖</em></p>
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -19,31 +19,43 @@
 
 RTTM 是一个专为**游戏引擎**和**性能敏感应用**设计的 C++20 动态反射库。
 
-**核心设计理念：动态查找 + 静态访问**
-- 通过字符串动态查找类型/属性/方法（运行时灵活性）
-- 使用 typed pointer arithmetic 访问数据（接近直接访问的性能）
+**核心设计理念：多层次 API，按需选择性能**
+- 纯动态 API：DLL 兼容，无需编译期类型知识
+- 缓存动态 API：预查找 handle，重复访问极快
+- 半静态 API：编译期类型 + 运行时名称
+- 零开销 API：等同直接调用
 
 ## ⚡ 性能对比 (vs RTTR)
 
+### 纯动态 API（每次查找，类似 RTTR FullDynamic）
+
 | 操作 | RTTM | RTTR | 加速比 |
 |------|------|------|--------|
-| 属性读取 (cached) | 1.07 ns | 13.1 ns | **12x** |
-| 属性写入 (cached) | 1.50 ns | 3.98 ns | **2.7x** |
-| 多属性访问 (3个) | 0.28 ns | 82.8 ns | **296x** |
-| 方法调用 (cached) | 3.27 ns | 13.9 ns | **4.3x** |
-| 对象创建 | 30.7 ns | 74.9 ns | **2.4x** |
-| 完整动态路径 | 20.6 ns | 33.9 ns | **1.6x** |
-| 批量属性访问 (100个) | 9.94 ns | 1476 ns | **148x** |
+| 对象创建 | 40.0 ns | 75.7 ns | **1.9x** |
+| 属性读取 | 17.7 ns | 21.2 ns | **1.2x** |
+| 属性写入 | 3.4 ns | 13.4 ns | **4.0x** |
+| 方法调用 (无参) | 17.4 ns | 26.2 ns | **1.5x** |
+| 方法调用 (带参) | 18.8 ns | 17.1 ns | 0.9x |
+
+### 缓存动态 API（预查找 handle）
+
+| 操作 | RTTM | RTTR | 加速比 |
+|------|------|------|--------|
+| 属性读取 | 1.4 ns | 13.4 ns | **10x** |
+| 属性写入 | 1.3 ns | 4.0 ns | **3x** |
+| 方法调用 (无参) | 4.5 ns | 13.7 ns | **3x** |
+| 方法调用 (带参) | 5.1 ns | 6.7 ns | **1.3x** |
 
 > 测试环境: 20核 CPU @ 3.9GHz, Clang -O3  
 > 完整结果见 [benchmark/BENCHMARK_RESULTS.md](benchmark/BENCHMARK_RESULTS.md)
 
 ## ✨ 核心特性
 
-- **高性能**: Cached 属性访问仅比直接访问慢 5x（RTTR 慢 65x）
+- **高性能**: 纯动态比 RTTR 快 1.2-4x，缓存模式快 3-10x
+- **多层次 API**: 从纯动态到零开销，按需选择
+- **DLL 兼容**: `Instance` API 支持动态加载类型
 - **零依赖**: 纯 C++20，无外部库依赖
 - **类型安全**: 编译期类型检查，运行时错误提示
-- **线程安全**: 读写锁 + TLS 缓存优化
 
 ## 🚀 快速开始
 
@@ -71,77 +83,98 @@ RTTM_REGISTRATION {
 }
 ```
 
-### 2. 动态访问 (简单 API)
+### 2. 纯动态 API（DLL 兼容）
 
 ```cpp
-// 获取类型
-auto handle = RTypeHandle::get<Player>();
+// 通过类型名创建实例（无需编译期类型知识）
+auto inst = Instance::create("Player");
 
-// 创建实例
-auto instance = handle.create();
-auto* player = static_cast<Player*>(instance.get());
+// 属性访问
+Variant v = inst.get_property("health");        // 返回 Variant
+inst.set_property("health", 80);                // 模板重载，直接接受 int
 
-// 绑定对象进行操作
-auto bound = handle.bind(*player);
-bound.set("name", std::string("Alice"));
-bound.set("health", 80);
-
-std::string name = bound.get<std::string>("name");  // "Alice"
-int hp = bound.call<int>("getHealth");              // 80
+// 方法调用
+Variant r = inst.invoke("getHealth");           // 返回 Variant
+inst.invoke("setInt", 100);                     // 模板重载，直接接受参数
 ```
 
-### 3. 高性能访问 (缓存句柄)
+### 3. 缓存动态 API（重复访问）
 
 ```cpp
-// 预缓存属性/方法句柄 (循环外)
+auto inst = Instance::create("Player");
+
+// 预查找 handle（一次性开销）
+auto prop = inst.get_property_handle("health");
+auto meth = inst.get_method_handle("getHealth", 0);
+void* obj = inst.get_raw();
+
+// 热路径访问（极快）
+int hp = prop.get_value_direct<int>(obj);       // 1.4 ns
+prop.set_value_direct(obj, 80);                 // 1.3 ns
+Variant r = meth.invoke(obj);                   // 4.5 ns
+```
+
+### 4. 半静态 API（知道类型）
+
+```cpp
 auto handle = RTypeHandle::get<Player>();
-auto propHealth = handle.get_property<int>("health");
-auto methGetHealth = handle.get_method("getHealth", 0);
+auto prop = handle.get_property<int>("health");
+auto meth = handle.get_method("getHealth", 0);
 
-// 热路径访问 (循环内) - 接近直接访问性能
-for (auto& player : players) {
-    int hp = propHealth.get(player);      // ~1ns
-    propHealth.set(player, hp - 10);      // ~1.5ns
-    int current = methGetHealth.call<int>(&player);  // ~3ns
-}
+Player player;
+prop.set(player, 80);                           // 0.3 ns
+int hp = meth.call<int>(&player);               // 3.8 ns
 ```
 
-## 📊 性能层级
+### 5. 零开销 API（编译期签名）
 
-```
-直接访问:        0.2 ns  (baseline)
-RTTM Cached:     1-3 ns  (5-15x baseline)
-RTTM FullDynamic: 5-20 ns (25-100x baseline)
-RTTR Cached:     4-14 ns (20-70x baseline)
+```cpp
+auto meth = TypedMethodHandle<int()>::from_const<Player, &Player::getHealth>();
+
+Player player;
+int hp = meth.call(player);                     // 0.2 ns - 等同直接调用
 ```
 
-**选择建议:**
-- 热路径/循环内: 使用 `PropertyHandle` / `MethodHandle`
-- 一般场景: 使用 `BoundType.get/set/call`
-- 完全动态: 使用字符串查找
+## 📊 API 层次
+
+| 层次 | API | 性能 | 使用场景 |
+|------|-----|------|----------|
+| 1 | `TypedMethodHandle` | 0.2 ns | 热路径，编译期知道签名 |
+| 2 | `PropertyHandle<T>` | 0.3 ns | 热路径，编译期知道类型 |
+| 3 | `DynamicProperty` | 1.3 ns | 纯动态，缓存访问 |
+| 4 | `set_property(name, value)` | 3.4 ns | 纯动态，无缓存 |
+| 5 | `set_property(name, Variant)` | 18.5 ns | 完全类型擦除 |
 
 ## 🔧 API 概览
 
-### RTypeHandle - 轻量类型句柄
+### Instance - 纯动态 API（DLL 兼容）
 
 ```cpp
-auto handle = RTypeHandle::get<T>();           // 静态获取
-auto handle = RTypeHandle::get("TypeName");    // 动态获取
+auto inst = Instance::create("TypeName");       // 通过名称创建
 
-handle.create();                               // 创建实例
-handle.bind(obj);                              // 绑定对象
-handle.get_property<T>("name");                // 获取属性句柄
-handle.get_method("name", argc);               // 获取方法句柄
+// 属性访问
+Variant v = inst.get_property("name");          // 返回 Variant
+inst.set_property("name", value);               // 模板重载
+
+// 方法调用
+Variant r = inst.invoke("method");              // 无参
+Variant r = inst.invoke("method", arg1, arg2);  // 模板重载
+
+// 缓存 handle
+auto prop = inst.get_property_handle("name");
+auto meth = inst.get_method_handle("method", argc);
 ```
 
-### BoundType - 绑定对象操作
+### RTypeHandle - 半静态 API
 
 ```cpp
-auto bound = handle.bind(obj);
+auto handle = RTypeHandle::get<T>();            // 静态获取
+auto handle = RTypeHandle::get("TypeName");     // 动态获取
 
-bound.get<T>("name");           // 读取属性
-bound.set("name", value);       // 写入属性
-bound.call<R>("method", args);  // 调用方法
+handle.create();                                // 创建实例
+handle.bind(obj);                               // 绑定对象
+handle.get_property<T>("name");                 // 获取属性句柄
+handle.get_method("name", argc);                // 获取方法句柄
 ```
 
 ### PropertyHandle - 缓存属性访问
@@ -149,30 +182,31 @@ bound.call<R>("method", args);  // 调用方法
 ```cpp
 auto prop = handle.get_property<int>("health");
 
-prop.get(obj);           // 读取 (~1ns)
-prop.set(obj, value);    // 写入 (~1.5ns)
+prop.get(obj);                                  // 读取 (~0.3ns)
+prop.set(obj, value);                           // 写入 (~0.3ns)
 ```
 
-### MethodHandle - 缓存方法调用
+### TypedMethodHandle - 零开销方法调用
 
 ```cpp
-auto meth = handle.get_method("getHealth", 0);
+auto meth = TypedMethodHandle<int()>::from_const<T, &T::getHealth>();
+auto meth = TypedMethodHandle<void(int)>::from<T, &T::setHealth>();
 
-meth.call<int>(&obj);              // 无参调用 (~3ns)
-meth.call<void>(&obj, arg1);       // 带参调用 (~5ns)
+meth.call(obj);                                 // 0.2ns - 等同直接调用
+meth.call(obj, arg);
 ```
 
 ## 🛡️ 错误处理
 
 ```cpp
 try {
-    auto handle = RTypeHandle::get("Unknown");
+    auto inst = Instance::create("Unknown");
 } catch (const TypeNotRegisteredError& e) {
     // 类型未注册
 }
 
 try {
-    bound.get<int>("unknown");
+    inst.get_property("unknown");
 } catch (const PropertyNotFoundError& e) {
     // 属性未找到，e.available_properties() 返回可用属性列表
 }

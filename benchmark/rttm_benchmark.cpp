@@ -13,6 +13,8 @@
 
 #include <benchmark/benchmark.h>
 #include "RTTM/RTTM.hpp"
+#include "RTTM/detail/PropertyHandle.hpp"
+#include "RTTM/detail/Instance.hpp"
 #include "benchmark_common.hpp"
 
 using namespace rttm;
@@ -302,6 +304,61 @@ static void RTTM_MethodCall_ComplexReturn(benchmark::State& state) {
 BENCHMARK(RTTM_MethodCall_ComplexReturn);
 
 // ============================================================================
+// 4b. TypedMethodHandle - Zero overhead method calls
+// ============================================================================
+
+// TypedMethodHandle: compile-time typed, zero overhead
+static void RTTM_TypedMethodCall_NoArgs(benchmark::State& state) {
+    SimpleClass obj;
+    obj.intValue = 42;
+    
+    // Create typed handle - stores direct function pointer
+    auto meth = TypedMethodHandle<int()>::from_const<SimpleClass, &SimpleClass::getInt>();
+    
+    int sum = 0;
+    for (auto _ : state) {
+        sum += meth.call(obj);
+        benchmark::DoNotOptimize(sum);
+    }
+}
+BENCHMARK(RTTM_TypedMethodCall_NoArgs);
+
+// TypedMethodHandle with argument
+static void RTTM_TypedMethodCall_WithArg(benchmark::State& state) {
+    SimpleClass obj;
+    
+    auto meth = TypedMethodHandle<void(int)>::from<SimpleClass, &SimpleClass::setInt>();
+    
+    int i = 0;
+    for (auto _ : state) {
+        meth.call(obj, i++);
+        benchmark::DoNotOptimize(obj.intValue);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_TypedMethodCall_WithArg);
+
+// Batch TypedMethodHandle calls
+static void RTTM_Batch_TypedMethodCalls(benchmark::State& state) {
+    std::vector<SimpleClass> objects(100);
+    for (int i = 0; i < 100; ++i) {
+        objects[i].intValue = i;
+    }
+    
+    auto meth = TypedMethodHandle<int()>::from_const<SimpleClass, &SimpleClass::getInt>();
+    
+    for (auto _ : state) {
+        int sum = 0;
+        for (auto& obj : objects) {
+            sum += meth.call(obj);
+        }
+        benchmark::DoNotOptimize(sum);
+    }
+    state.SetItemsProcessed(state.iterations() * 100);
+}
+BENCHMARK(RTTM_Batch_TypedMethodCalls);
+
+// ============================================================================
 // 5. Full Reflection Path Benchmarks
 // ============================================================================
 
@@ -374,6 +431,7 @@ static void RTTM_Batch_Creation(benchmark::State& state) {
         }
         benchmark::DoNotOptimize(objects);
     }
+    state.SetItemsProcessed(state.iterations() * 100);
 }
 BENCHMARK(RTTM_Batch_Creation);
 
@@ -394,6 +452,7 @@ static void RTTM_Batch_PropertyAccess(benchmark::State& state) {
         }
         benchmark::DoNotOptimize(sum);
     }
+    state.SetItemsProcessed(state.iterations() * 100);
 }
 BENCHMARK(RTTM_Batch_PropertyAccess);
 
@@ -414,6 +473,7 @@ static void RTTM_Batch_MethodCalls(benchmark::State& state) {
         }
         benchmark::DoNotOptimize(sum);
     }
+    state.SetItemsProcessed(state.iterations() * 100);
 }
 BENCHMARK(RTTM_Batch_MethodCalls);
 
@@ -450,7 +510,265 @@ static void RTTM_MethodEnumeration(benchmark::State& state) {
 BENCHMARK(RTTM_MethodEnumeration);
 
 // ============================================================================
-// 8. Baseline - Direct Access (for comparison)
+// 8. Pure Dynamic API (Instance + Variant) - RTTR-like
+// ============================================================================
+
+// Create instance by type name (no template)
+static void RTTM_Instance_Create(benchmark::State& state) {
+    std::string_view type_name = "SimpleClass";
+    
+    for (auto _ : state) {
+        auto inst = Instance::create(type_name);
+        benchmark::DoNotOptimize(inst.get_raw());
+    }
+}
+BENCHMARK(RTTM_Instance_Create);
+
+// Pure dynamic property read (returns Variant)
+static void RTTM_Instance_PropertyRead(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    inst.set_property_value("intValue", 42);
+    
+    for (auto _ : state) {
+        Variant v = inst.get_property("intValue");
+        benchmark::DoNotOptimize(v.get_raw());
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyRead);
+
+// Pure dynamic property read (direct value, no Variant)
+static void RTTM_Instance_PropertyRead_Direct(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    inst.set_property_value("intValue", 42);
+    
+    int sum = 0;
+    for (auto _ : state) {
+        sum += inst.get_property_value<int>("intValue");
+        benchmark::DoNotOptimize(sum);
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyRead_Direct);
+
+// Pure dynamic property write (from Variant)
+static void RTTM_Instance_PropertyWrite(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    
+    int i = 0;
+    for (auto _ : state) {
+        inst.set_property("intValue", Variant::create(i++));
+        benchmark::DoNotOptimize(inst.get_raw());
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyWrite);
+
+// Pure dynamic property write (template overload, like RTTR's set_value)
+static void RTTM_Instance_PropertyWrite_Template(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    
+    int i = 0;
+    for (auto _ : state) {
+        inst.set_property("intValue", i++);  // 直接传 int，不需要 Variant
+        benchmark::DoNotOptimize(inst.get_raw());
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyWrite_Template);
+
+// Pure dynamic property write (direct value, no Variant - like RTTR)
+static void RTTM_Instance_PropertyWrite_Value(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    
+    int i = 0;
+    for (auto _ : state) {
+        inst.set_property_value("intValue", i++);
+        benchmark::DoNotOptimize(inst.get_raw());
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyWrite_Value);
+
+// Test just the member lookup overhead
+static void RTTM_Instance_MemberLookup(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    const auto* type_info = inst.type_info();
+    
+    for (auto _ : state) {
+        auto member = type_info->find_member("intValue");
+        benchmark::DoNotOptimize(member);
+    }
+}
+BENCHMARK(RTTM_Instance_MemberLookup);
+
+// Test raw property write (no lookup, just write)
+static void RTTM_Instance_RawPropertyWrite(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    const auto* type_info = inst.type_info();
+    auto member = type_info->find_member("intValue");
+    void* obj_ptr = inst.get_raw();
+    void* prop_ptr = static_cast<char*>(obj_ptr) + member->offset;
+    
+    int i = 0;
+    for (auto _ : state) {
+        *static_cast<int*>(prop_ptr) = i++;
+        benchmark::DoNotOptimize(obj_ptr);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_RawPropertyWrite);
+
+// Test property write with lookup but no type check
+static void RTTM_Instance_PropertyWrite_NoTypeCheck(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    const auto* type_info = inst.type_info();
+    void* obj_ptr = inst.get_raw();
+    
+    int i = 0;
+    for (auto _ : state) {
+        auto member = type_info->find_member("intValue");
+        void* prop_ptr = static_cast<char*>(obj_ptr) + member->offset;
+        *static_cast<int*>(prop_ptr) = i++;
+        benchmark::DoNotOptimize(obj_ptr);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyWrite_NoTypeCheck);
+
+// Test property write with get_raw() call each time
+static void RTTM_Instance_PropertyWrite_WithGetRaw(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    const auto* type_info = inst.type_info();
+    
+    int i = 0;
+    for (auto _ : state) {
+        auto member = type_info->find_member("intValue");
+        void* obj_ptr = inst.get_raw();
+        void* prop_ptr = static_cast<char*>(obj_ptr) + member->offset;
+        *static_cast<int*>(prop_ptr) = i++;
+        benchmark::DoNotOptimize(obj_ptr);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyWrite_WithGetRaw);
+
+// Test set_property_direct directly
+static void RTTM_Instance_PropertyWrite_Direct(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    
+    int i = 0;
+    for (auto _ : state) {
+        inst.set_property_direct("intValue", i++);
+        benchmark::DoNotOptimize(inst.get_raw());
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_PropertyWrite_Direct);
+
+// Cached DynamicProperty read
+static void RTTM_DynamicProperty_Read_Cached(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    inst.set_property_value("intValue", 42);
+    auto prop = inst.get_property_handle("intValue");
+    void* obj = inst.get_raw();
+    
+    int sum = 0;
+    for (auto _ : state) {
+        sum += prop.get_value_direct<int>(obj);
+        benchmark::DoNotOptimize(sum);
+    }
+}
+BENCHMARK(RTTM_DynamicProperty_Read_Cached);
+
+// Cached DynamicProperty write
+static void RTTM_DynamicProperty_Write_Cached(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    auto prop = inst.get_property_handle("intValue");
+    void* obj = inst.get_raw();
+    
+    int i = 0;
+    for (auto _ : state) {
+        prop.set_value_direct(obj, i++);
+        benchmark::DoNotOptimize(obj);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_DynamicProperty_Write_Cached);
+
+// Pure dynamic method call (returns Variant)
+static void RTTM_Instance_MethodCall(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    inst.set_property_value("intValue", 42);
+    
+    int sum = 0;
+    for (auto _ : state) {
+        Variant result = inst.invoke("getInt");
+        sum += result.get<int>();
+        benchmark::DoNotOptimize(sum);
+    }
+}
+BENCHMARK(RTTM_Instance_MethodCall);
+
+// Pure dynamic method call with args
+static void RTTM_Instance_MethodCall_WithArg(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    
+    int i = 0;
+    for (auto _ : state) {
+        std::array<Variant, 1> args = {Variant::create(i++)};
+        inst.invoke("setInt", std::span<const Variant>{args});
+        benchmark::DoNotOptimize(inst.get_raw());
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_MethodCall_WithArg);
+
+// Pure dynamic method call with args (template overload, like RTTR's invoke)
+static void RTTM_Instance_MethodCall_WithArg_Template(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    
+    int i = 0;
+    for (auto _ : state) {
+        inst.invoke("setInt", i++);  // 直接传 int，不需要 Variant
+        benchmark::DoNotOptimize(inst.get_raw());
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_Instance_MethodCall_WithArg_Template);
+
+// Cached DynamicMethod call (no args)
+static void RTTM_DynamicMethod_Call_Cached(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    inst.set_property_value("intValue", 42);
+    auto meth = inst.get_method_handle("getInt", 0);
+    void* obj = inst.get_raw();
+    
+    int sum = 0;
+    for (auto _ : state) {
+        Variant result = meth.invoke(obj);
+        sum += result.get<int>();
+        benchmark::DoNotOptimize(sum);
+    }
+}
+BENCHMARK(RTTM_DynamicMethod_Call_Cached);
+
+// Cached DynamicMethod call (with arg)
+static void RTTM_DynamicMethod_Call_WithArg_Cached(benchmark::State& state) {
+    auto inst = Instance::create("SimpleClass");
+    auto meth = inst.get_method_handle("setInt", 1);
+    void* obj = inst.get_raw();
+    
+    int i = 0;
+    for (auto _ : state) {
+        std::array<Variant, 1> args = {Variant::create(i++)};
+        meth.invoke(obj, args);
+        benchmark::DoNotOptimize(obj);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(RTTM_DynamicMethod_Call_WithArg_Cached);
+
+// ============================================================================
+// 8. Baseline - Direct Access (for comparison, 8x unrolled)
 // ============================================================================
 
 static void Baseline_DirectPropertyRead(benchmark::State& state) {
@@ -460,8 +778,16 @@ static void Baseline_DirectPropertyRead(benchmark::State& state) {
     int sum = 0;
     for (auto _ : state) {
         sum += obj.intValue;
+        sum += obj.intValue;
+        sum += obj.intValue;
+        sum += obj.intValue;
+        sum += obj.intValue;
+        sum += obj.intValue;
+        sum += obj.intValue;
+        sum += obj.intValue;
         benchmark::DoNotOptimize(sum);
     }
+    state.SetItemsProcessed(state.iterations() * 8);
 }
 BENCHMARK(Baseline_DirectPropertyRead);
 
@@ -470,9 +796,18 @@ static void Baseline_DirectPropertyWrite(benchmark::State& state) {
     
     int i = 0;
     for (auto _ : state) {
-        obj.intValue = i++;
-        benchmark::DoNotOptimize(obj.intValue);
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        obj.intValue = i; i = obj.intValue + 1;
+        benchmark::DoNotOptimize(i);
+        benchmark::ClobberMemory();
     }
+    state.SetItemsProcessed(state.iterations() * 8);
 }
 BENCHMARK(Baseline_DirectPropertyWrite);
 
@@ -483,8 +818,16 @@ static void Baseline_DirectMethodCall(benchmark::State& state) {
     int sum = 0;
     for (auto _ : state) {
         sum += obj.getInt();
+        sum += obj.getInt();
+        sum += obj.getInt();
+        sum += obj.getInt();
+        sum += obj.getInt();
+        sum += obj.getInt();
+        sum += obj.getInt();
+        sum += obj.getInt();
         benchmark::DoNotOptimize(sum);
     }
+    state.SetItemsProcessed(state.iterations() * 8);
 }
 BENCHMARK(Baseline_DirectMethodCall);
 

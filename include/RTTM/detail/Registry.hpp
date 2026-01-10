@@ -16,6 +16,7 @@
 #include "TypeInfo.hpp"
 #include "TypeManager.hpp"
 #include "TypeTraits.hpp"
+#include "Variant.hpp"
 
 #include <string_view>
 #include <type_traits>
@@ -185,6 +186,13 @@ public:
             false  // non-const
         };
         
+        // Set raw invoker for fast path - store method pointer in MethodInfo
+        method_info.raw_invoker = &raw_invoke_method<R, Args...>;
+        method_info.method_ptr = reinterpret_cast<void*&>(func);
+        
+        // Set variant invoker for pure dynamic path
+        method_info.variant_invoker = &variant_invoke_method<R, Args...>;
+        
         // Add to methods map (supports overloading)
         info_->methods[std::string{name}].push_back(std::move(method_info));
         info_->invalidate_name_cache();  // Invalidate cached name list
@@ -227,6 +235,13 @@ public:
             return_type_name,
             true  // const method
         };
+        
+        // Set raw invoker for fast path - store method pointer in MethodInfo
+        method_info.raw_invoker = &raw_invoke_const_method<R, Args...>;
+        method_info.method_ptr = reinterpret_cast<void*&>(func);
+        
+        // Set variant invoker for pure dynamic path
+        method_info.variant_invoker = &variant_invoke_const_method<R, Args...>;
         
         // Add to methods map
         info_->methods[std::string{name}].push_back(std::move(method_info));
@@ -452,6 +467,128 @@ private:
         } else {
             return std::any{(obj->*func)(convert_arg<Args>(args[Is])...)};
         }
+    }
+    
+    // Store method pointer for raw invoker (deprecated - now stored in MethodInfo)
+    // Kept for backward compatibility
+    template<typename R, typename... Args>
+    static inline R(T::*stored_method_)(Args...) = nullptr;
+    
+    template<typename R, typename... Args>
+    static inline R(T::*stored_const_method_)(Args...) const = nullptr;
+    
+    /**
+     * @brief Raw invoker for non-const method (avoids std::function overhead)
+     * 
+     * method_ptr contains the actual member function pointer
+     */
+    template<typename R, typename... Args>
+    static std::any raw_invoke_method(void* obj, std::span<std::any> args, void* method_ptr) {
+        auto func = reinterpret_cast<R(T::*&)(Args...)>(method_ptr);
+        return invoke_method<R, Args...>(static_cast<T*>(obj), func, 
+                                         args, std::index_sequence_for<Args...>{});
+    }
+    
+    /**
+     * @brief Raw invoker for const method
+     */
+    template<typename R, typename... Args>
+    static std::any raw_invoke_const_method(void* obj, std::span<std::any> args, void* method_ptr) {
+        auto func = reinterpret_cast<R(T::*&)(Args...) const>(method_ptr);
+        return invoke_const_method<R, Args...>(static_cast<T*>(obj), func,
+                                               args, std::index_sequence_for<Args...>{});
+    }
+    
+    /**
+     * @brief Variant invoker for non-const method (fastest dynamic path)
+     * 
+     * Directly works with Variant pointers, avoiding std::any conversion.
+     * result: pointer to Variant to store result (nullptr for void)
+     * args: array of const Variant* pointers
+     * method_ptr: the stored method pointer
+     */
+    template<typename R, typename... Args>
+    static void variant_invoke_method(void* obj, void* result, const void* const* args, std::size_t nargs, void* method_ptr) {
+        auto func = reinterpret_cast<R(T::*&)(Args...)>(method_ptr);
+        if constexpr (sizeof...(Args) == 0) {
+            if constexpr (std::is_void_v<R>) {
+                (static_cast<T*>(obj)->*func)();
+            } else {
+                R ret = (static_cast<T*>(obj)->*func)();
+                if (result) {
+                    *static_cast<Variant*>(result) = Variant::create(std::move(ret));
+                }
+            }
+        } else {
+            variant_invoke_method_impl<R, Args...>(obj, result, args, method_ptr, std::index_sequence_for<Args...>{});
+        }
+    }
+    
+    template<typename R, typename... Args, std::size_t... Is>
+    static void variant_invoke_method_impl(void* obj, void* result, const void* const* args, void* method_ptr, std::index_sequence<Is...>) {
+        auto func = reinterpret_cast<R(T::*&)(Args...)>(method_ptr);
+        if constexpr (std::is_void_v<R>) {
+            (static_cast<T*>(obj)->*func)(extract_variant_arg<Args>(args[Is])...);
+        } else {
+            R ret = (static_cast<T*>(obj)->*func)(extract_variant_arg<Args>(args[Is])...);
+            if (result) {
+                *static_cast<Variant*>(result) = Variant::create(std::move(ret));
+            }
+        }
+    }
+    
+    /**
+     * @brief Variant invoker for const method (fastest dynamic path)
+     */
+    template<typename R, typename... Args>
+    static void variant_invoke_const_method(void* obj, void* result, const void* const* args, std::size_t nargs, void* method_ptr) {
+        auto func = reinterpret_cast<R(T::*&)(Args...) const>(method_ptr);
+        if constexpr (sizeof...(Args) == 0) {
+            if constexpr (std::is_void_v<R>) {
+                (static_cast<T*>(obj)->*func)();
+            } else {
+                R ret = (static_cast<T*>(obj)->*func)();
+                if (result) {
+                    *static_cast<Variant*>(result) = Variant::create(std::move(ret));
+                }
+            }
+        } else {
+            variant_invoke_const_method_impl<R, Args...>(obj, result, args, method_ptr, std::index_sequence_for<Args...>{});
+        }
+    }
+    
+    template<typename R, typename... Args, std::size_t... Is>
+    static void variant_invoke_const_method_impl(void* obj, void* result, const void* const* args, void* method_ptr, std::index_sequence<Is...>) {
+        auto func = reinterpret_cast<R(T::*&)(Args...) const>(method_ptr);
+        if constexpr (std::is_void_v<R>) {
+            (static_cast<T*>(obj)->*func)(extract_variant_arg<Args>(args[Is])...);
+        } else {
+            R ret = (static_cast<T*>(obj)->*func)(extract_variant_arg<Args>(args[Is])...);
+            if (result) {
+                *static_cast<Variant*>(result) = Variant::create(std::move(ret));
+            }
+        }
+    }
+    
+    /**
+     * @brief Extract argument from Variant pointer
+     * 
+     * Handles both value types and const reference types.
+     */
+    template<typename Arg>
+    static auto extract_variant_arg(const void* arg_ptr) {
+        using DecayArg = std::decay_t<Arg>;
+        const Variant* v = static_cast<const Variant*>(arg_ptr);
+        
+        if (v->is_type<DecayArg>()) {
+            return v->get_unchecked<DecayArg>();
+        }
+        if constexpr (std::is_arithmetic_v<DecayArg>) {
+            if (v->can_convert<DecayArg>()) {
+                return v->convert<DecayArg>();
+            }
+        }
+        return v->get<DecayArg>();
     }
     
     /**

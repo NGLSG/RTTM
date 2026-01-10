@@ -192,6 +192,78 @@ private:
     const detail::MethodInfo* method_;
 };
 
+/**
+ * @brief Typed method handle for zero-overhead invocation
+ * 
+ * TypedMethodHandle stores a direct function pointer, avoiding
+ * all type erasure overhead. This is the fastest possible method
+ * invocation in RTTM.
+ * 
+ * Usage:
+ * @code
+ * // Create typed handle (stores direct function pointer)
+ * auto handle = TypedMethodHandle<int()>::from<MyClass, &MyClass::getInt>();
+ * 
+ * // Call with zero overhead - just a function pointer call
+ * MyClass obj;
+ * int val = handle.call(obj);  // ~0.3ns
+ * @endcode
+ */
+template<typename Signature>
+class TypedMethodHandle;
+
+// Specialization for member functions: R(Args...)
+template<typename R, typename... Args>
+class TypedMethodHandle<R(Args...)> {
+public:
+    // Function pointer type for non-const member
+    using FuncPtr = R(*)(void*, Args...);
+    
+    constexpr TypedMethodHandle() noexcept : func_(nullptr) {}
+    explicit constexpr TypedMethodHandle(FuncPtr func) noexcept : func_(func) {}
+    
+    /**
+     * @brief Create from member function pointer
+     */
+    template<typename C, R(C::*Method)(Args...)>
+    [[nodiscard]] static TypedMethodHandle from() noexcept {
+        return TypedMethodHandle{[](void* obj, Args... args) -> R {
+            return (static_cast<C*>(obj)->*Method)(std::forward<Args>(args)...);
+        }};
+    }
+    
+    /**
+     * @brief Create from const member function pointer
+     */
+    template<typename C, R(C::*Method)(Args...) const>
+    [[nodiscard]] static TypedMethodHandle from_const() noexcept {
+        return TypedMethodHandle{[](void* obj, Args... args) -> R {
+            return (static_cast<const C*>(obj)->*Method)(std::forward<Args>(args)...);
+        }};
+    }
+    
+    [[nodiscard]] constexpr bool is_valid() const noexcept { return func_ != nullptr; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return is_valid(); }
+    
+    /**
+     * @brief Call with object reference (fastest path)
+     */
+    template<typename C>
+    [[nodiscard]] R call(C& obj, Args... args) const {
+        return func_(static_cast<void*>(&obj), std::forward<Args>(args)...);
+    }
+    
+    /**
+     * @brief Call with void pointer
+     */
+    [[nodiscard]] R call(void* obj, Args... args) const {
+        return func_(obj, std::forward<Args>(args)...);
+    }
+
+private:
+    FuncPtr func_;
+};
+
 } // namespace rttm
 
 #endif // RTTM_DETAIL_PROPERTY_HANDLE_HPP
